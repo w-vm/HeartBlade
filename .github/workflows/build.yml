@@ -1,0 +1,66 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Build + test client
+        working-directory: client
+        run: |
+          npm ci || npm install
+          npx tsc --noEmit
+          npm test
+          node build.mjs
+      - uses: actions/upload-artifact@v4
+        with: { name: client, path: client/dist/heartblade.js }
+
+  tweak:
+    runs-on: macos-15
+    env:
+      HB_BUNDLE_URL: https://github.com/${{ github.repository }}/releases/download/latest/heartblade.js
+    steps:
+      - uses: actions/checkout@v4
+      - name: Theos cache keys
+        run: echo upstream_heads=`git ls-remote https://github.com/theos/theos | head -n 1 | cut -f 1`-`git ls-remote https://github.com/theos/sdks | head -n 1 | cut -f 1` >> $GITHUB_ENV
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/theos
+          key: ${{ runner.os }}-${{ env.upstream_heads }}
+      - uses: Randomblock1/theos-action@v1
+      - name: GNU make
+        run: echo "PATH=$(brew --prefix make)/libexec/gnubin:$PATH" >> $GITHUB_ENV
+      - name: Build .deb
+        working-directory: tweak
+        run: |
+          ./scripts/fetch-headers.sh
+          make package
+      - uses: actions/upload-artifact@v4
+        with: { name: deb, path: tweak/packages/*.deb }
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: [client, tweak]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true }
+      - name: Name the package HeartBlade.deb
+        run: mv *.deb HeartBlade.deb
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Heartblade (latest)
+          files: |
+            heartblade.js
+            HeartBlade.deb
