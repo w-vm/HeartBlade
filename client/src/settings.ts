@@ -12,14 +12,17 @@ export interface SettingsReport { rendererFound: boolean; listInserted: boolean;
 function findKeyList(root: any): string[] | null {
   const seen = new Set<any>();
   const walk = (o: any, depth: number): string[] | null => {
-    if (!o || typeof o !== "object" || seen.has(o) || depth > 4) return null;
+    if (!o || typeof o !== "object" || seen.has(o) || depth > 3) return null;
     seen.add(o);
-    if (Array.isArray(o) && o.includes("ACCOUNT") && o.includes("ADVANCED") && o.every((x) => typeof x === "string")) return o;
-    let keys: string[] = [];
-    try { keys = Object.keys(o); } catch { return null; }
-    for (const k of keys.slice(0, 60)) {
-      let v: any; try { v = o[k]; } catch { continue; }
-      const hit = walk(v, depth + 1);
+    if (Array.isArray(o)) {
+      return o.includes("ACCOUNT") && o.includes("ADVANCED") && o.every((x) => typeof x === "string") ? o : null;
+    }
+    // Only plain objects: never touch host objects, proxies or class instances.
+    if (Object.getPrototypeOf(o) !== Object.prototype) return null;
+    for (const k of Object.keys(o).slice(0, 60)) {
+      const d = Object.getOwnPropertyDescriptor(o, k);
+      if (!d || !("value" in d)) continue; // skip getters
+      const hit = walk(d.value, depth + 1);
       if (hit) return hit;
     }
     return null;
