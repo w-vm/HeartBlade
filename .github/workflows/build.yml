@@ -43,7 +43,7 @@ jobs:
       - name: Build .deb
         working-directory: tweak
         run: |
-          ./scripts/fetch-headers.sh
+          sh ./scripts/fetch-headers.sh
           make package
       - uses: actions/upload-artifact@v4
         with: { name: deb, path: tweak/packages/*.deb }
