@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://heartunderblade.neocities.org/old_site/images/shinobu1.gif" alt="HeartBlade" width="280">
+<img src="https://heartunderblade.neocities.org/old_site/images/shinobu1.gif" alt="HeartBlade" width="380">
 
 # HeartBlade
 
