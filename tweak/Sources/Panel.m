@@ -74,7 +74,7 @@ typedef NS_ENUM(NSInteger, HBPage) { HBPageRoot, HBPagePlugins, HBPageThemes, HB
     switch (self.page) {
         case HBPageRoot: return 3;
         case HBPagePlugins: case HBPageThemes: return _items.count + 1;
-        case HBPageDeveloper: return s == 0 ? 3 : 3;
+        case HBPageDeveloper: return s == 0 ? 4 : 3;
         case HBPageLogs: return MAX(_logLines.count, 1);
     }
 }
@@ -124,6 +124,13 @@ typedef NS_ENUM(NSInteger, HBPage) { HBPageRoot, HBPagePlugins, HBPageThemes, HB
             if (ip.section == 0) {
                 if (ip.row == 0) return [self cell:@"Update client now" detail:nil chevron:NO color:HBAccent()];
                 if (ip.row == 1) return [self cell:@"Developer bundle URL" detail:HBDevURL() ?: @"off" chevron:NO color:nil];
+                if (ip.row == 3) {
+                    UITableViewCell *lc = [self cell:@"Load client" detail:nil chevron:NO color:nil];
+                    UISwitch *lsw = [UISwitch new]; lsw.on = HBClientEnabled(); lsw.onTintColor = HBAccent();
+                    [lsw addTarget:self action:@selector(clientToggled:) forControlEvents:UIControlEventValueChanged];
+                    lc.accessoryView = lsw; lc.selectionStyle = UITableViewCellSelectionStyleNone;
+                    return lc;
+                }
                 UITableViewCell *c = [self cell:@"Shake to open panel" detail:nil chevron:NO color:nil];
                 UISwitch *sw = [UISwitch new]; sw.on = HBShakeEnabled(); sw.onTintColor = HBAccent();
                 [sw addTarget:self action:@selector(shakeToggled:) forControlEvents:UIControlEventValueChanged];
@@ -152,6 +159,7 @@ typedef NS_ENUM(NSInteger, HBPage) { HBPageRoot, HBPagePlugins, HBPageThemes, HB
     [self reload];
 }
 - (void)shakeToggled:(UISwitch *)sw { HBSetShakeEnabled(sw.on); }
+- (void)clientToggled:(UISwitch *)sw { HBSetClientEnabled(sw.on); }
 
 - (BOOL)tableView:(UITableView *)tv canEditRowAtIndexPath:(NSIndexPath *)ip {
     return (self.page == HBPagePlugins || self.page == HBPageThemes) && ip.row < (NSInteger)_items.count;
