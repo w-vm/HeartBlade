@@ -1,0 +1,10 @@
+{
+  "name": "Crimson",
+  "author": "you",
+  "version": "1.0.0",
+  "semanticColors": {
+    "BACKGROUND_PRIMARY": { "dark": "#12070a", "light": "#fff5f6" },
+    "BACKGROUND_SECONDARY": { "dark": "#1b0b10", "light": "#ffe9ec" }
+  },
+  "rawColors": {}
+}
