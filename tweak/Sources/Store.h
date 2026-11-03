@@ -38,5 +38,6 @@ NSString *HBDebugReport(void);
 BOOL HBShakeEnabled(void);
 void HBSetShakeEnabled(BOOL on);
 extern BOOL HBSettingsEntryActive;
-
+BOOL HBClientEnabled(void);
+void HBSetClientEnabled(BOOL on);
 NS_ASSUME_NONNULL_END
