@@ -259,10 +259,11 @@ NSString *HBDebugReport(void) {
     NSArray *lines = HBLogLines();
     NSUInteger from = lines.count > 150 ? lines.count - 150 : 0;
     for (NSUInteger i = from; i < lines.count; i++) [r appendFormat:@"%@\n", lines[i]];
-    BOOL HBClientEnabled(void) {
+    return r;
+}
+
+BOOL HBClientEnabled(void) {
     id v = [NSUserDefaults.standardUserDefaults objectForKey:@"dev.heartblade.client"];
     return v ? [v boolValue] : YES;
 }
 void HBSetClientEnabled(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:@"dev.heartblade.client"]; }
-    return r;
-}
