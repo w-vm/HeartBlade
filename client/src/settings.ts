@@ -9,7 +9,7 @@ import { log, warn } from "./log";
  */
 export interface SettingsReport {
   rendererFound: boolean; listInserted: boolean; candidates: Array<{ keys: string[] }>; error?: string;
-  unsupported?: boolean; probe?: any; settingsExports?: Array<{ m: number; key: string; kind: string }>; cfgKeyCount?: number; cfgInfo?: any; moduleKeys?: Record<string, string[]>; rendererLike?: Array<{ path: string; keyCount: number; sample: string[] }>; attempts?: number; cfgSample?: string[]; entryShape?: any; hits?: Array<{ path: string; len: number; score: number; head: string[] }>;
+  unsupported?: boolean; scan?: any; probe?: any; settingsExports?: Array<{ m: number; key: string; kind: string }>; cfgKeyCount?: number; cfgInfo?: any; moduleKeys?: Record<string, string[]>; rendererLike?: Array<{ path: string; keyCount: number; sample: string[] }>; attempts?: number; cfgSample?: string[]; entryShape?: any; hits?: Array<{ path: string; len: number; score: number; head: string[] }>;
 }
 
 interface Hit { arr: string[]; path: string; score: number }
@@ -75,6 +75,41 @@ function findRendererLike(root: any, modPath: string, out: Array<{ path: string;
   } catch { /* ignore */ }
 }
 
+/** Read-only scan for where Discord's mobile settings screen is defined. Never mutates anything. */
+function scanSettingsScreen() {
+  const out: any = { acct: [], named: [], routes: [] };
+  const NAME = /^(UserSettings|Settings)(Overview|List|Screen|Root|Home|Main|Row|Section|Navigator|Page)|SettingsOverview|SettingsScreen/;
+  let i = 0;
+  for (const m of metro.findAllLoaded(() => true)) {
+    const idx = i++;
+    try {
+      const keys = Object.keys(m);
+      for (const k of keys.slice(0, 300)) {
+        if (NAME.test(k) && out.named.length < 40) out.named.push({ m: idx, key: k, kind: typeof (m as any)[k] });
+      }
+      // objects / arrays that contain the classic top-level settings route names
+      const seen = new Set<any>(); let budget = 600;
+      const walk = (o: any, depth: number, path: string) => {
+        if (!o || typeof o !== "object" || seen.has(o) || depth > 4 || budget-- <= 0) return;
+        seen.add(o);
+        if (Array.isArray(o)) {
+          if (o.length && o.length < 80 && o.some((x) => x === "ACCOUNT" || x === "PRIVACY_AND_SAFETY") && out.acct.length < 12)
+            out.acct.push({ path, kind: "array", len: o.length, head: o.slice(0, 8).map((x) => (typeof x === "string" ? x : typeof x === "object" ? Object.keys(x ?? {}).slice(0, 6).join(",") : typeof x)) });
+          else for (let q = 0; q < Math.min(o.length, 40); q++) walk(o[q], depth + 1, `${path}[${q}]`);
+          return;
+        }
+        if (Object.getPrototypeOf(o) !== Object.prototype) return;
+        const ks = Object.keys(o).slice(0, 120);
+        if ((ks.includes("ACCOUNT") || ks.includes("PRIVACY_AND_SAFETY")) && out.acct.length < 12)
+          out.acct.push({ path, kind: "object", n: ks.length, head: ks.slice(0, 10), valKind: typeof (o as any)[ks[0]] });
+        for (const k of ks) { const d = Object.getOwnPropertyDescriptor(o, k); if (d && "value" in d) walk(d.value, depth + 1, `${path}.${k}`); }
+      };
+      walk(m, 0, `m${idx}`);
+    } catch { /* ignore */ }
+  }
+  return out;
+}
+
 let done = false;
 let attempts = 0;
 
@@ -112,7 +147,7 @@ export function installSettingsEntry(): SettingsReport {
             if (typeof v === "function" || (v && typeof v === "object")) found.push({ m: idx, key: k, kind: typeof v });
           }
         } catch { /* ignore */ }
-        if (found.length >= 60) break;
+        if (found.length >= 12) break;
       }
       report.settingsExports = found;
       // Probe: it may be a lazy getter that returns the real config. Read-only, we only record its shape.
@@ -120,6 +155,7 @@ export function installSettingsEntry(): SettingsReport {
         const r = (cfg as any)();
         report.probe = { type: typeof r, plain: !!r && Object.getPrototypeOf(r) === Object.prototype, count: r && typeof r === "object" ? Object.keys(r).length : 0, sample: r && typeof r === "object" ? Object.keys(r).slice(0, 15) : [], entry: r && typeof r === "object" ? shapeOf(r[Object.keys(r)[0]]) : null };
       } catch (e: any) { report.probe = { error: String(e?.message ?? e) }; }
+      try { report.scan = scanSettingsScreen(); } catch (e: any) { report.scan = { error: String(e?.message ?? e) }; }
       warn("settings: unsupported Discord settings layout, row not added (use the shake gesture)");
       return report;
     }
