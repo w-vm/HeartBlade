@@ -6,7 +6,9 @@ import { runningPlugins } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, needsRestart, markChanged } from "../manager";
-import { RN, RX, h, palette, Screen, Hero, Group, Row, SwitchRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl } from "./kit";
+import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl } from "./kit";
+import { cachedUser, loadUser, openProfile } from "./discord";
+import { sysInfo } from "../sysinfo";
 
 export const PAGE_ROUTE = "HEARTBLADE_PAGE";
 
@@ -39,6 +41,26 @@ const restartNow = () => confirm("Restart Discord?", "Discord will close. Open i
 
 // ---- root ---------------------------------------------------------------------------------------------------
 
+/** Discord credit: the author's account (avatar + username) read from Discord itself; tapping opens the profile inside the app. */
+function DiscordRow() {
+  const { useState, useEffect } = RX();
+  const { Image } = RN();
+  const [user, setUser] = useState(() => cachedUser(BRAND.discordId));
+  useEffect(() => {
+    if (user) return;
+    let alive = true;
+    loadUser(BRAND.discordId).then((u) => { if (alive && u) setUser(u); }, () => { /* keep the fallback */ });
+    return () => { alive = false; };
+  }, []);
+  return Row({
+    left: user?.avatar ? h(Image, { source: { uri: user.avatar }, style: { width: 32, height: 32, borderRadius: 16 } }) : null,
+    title: user ? user.username : "Discord",
+    subtitle: user ? undefined : BRAND.discordId,
+    chevron: true,
+    onPress: () => openProfile(BRAND.discordId),
+  });
+}
+
 function RootPage(props: any) {
   const { useState } = RX();
   const { View, Image } = RN(); const P = palette();
@@ -47,44 +69,61 @@ function RootPage(props: any) {
   const plugins = listEntries("plugin"), themes = listEntries("theme");
   const on = plugins.filter((e) => e.enabled).length;
   const active = themes.find((e) => e.enabled);
-  const kids: any[] = [
-    Hero({ subtitle: BRAND.tagline, badge: `v${__HB_VERSION__}`, quote: BRAND.quote }),
-  ];
+  const si = sysInfo();
+
+  const kids: any[] = [];
+  if (needsRestart()) kids.push(Banner({ text: "Changes saved. Restart Discord to apply them.", action: "Restart", onAction: restartNow }));
+
+  // icon + name, banner, quote
+  kids.push(Hero());
   if (BRAND.aboutGif && !gifFailed) {
-    kids.push(h(View, { style: { height: 170, borderRadius: 12, overflow: "hidden", backgroundColor: P.card, marginBottom: 22 } },
+    kids.push(h(View, { style: { height: 190, borderRadius: 12, overflow: "hidden", backgroundColor: P.card } },
       h(Image, { source: { uri: BRAND.aboutGif }, resizeMode: "cover", style: { width: "100%", height: "100%" }, onError: () => setGifFailed(true) })));
   }
-  if (needsRestart()) kids.push(Banner({ text: "Changes saved. Restart Discord to apply them.", action: "Restart", onAction: restartNow }));
-  kids.push(Group({
+  kids.push(Quote());
+
+  // about (plain text, no box)
+  kids.push(Prose({
     title: "About",
-    children: [
-      Row({ title: "Source code", subtitle: "github.com/w-vm/HeartBlade", chevron: true, onPress: () => openUrl(BRAND.repo) }),
-      Row({ title: "Latest release", chevron: true, onPress: () => openUrl(BRAND.releases) }),
-    ],
-    footer: "Plugins and themes installed from a link. Plugins run with full access to your account, so install only what you trust. Personal project, updates are not guaranteed. Not affiliated with Discord.",
-  }));
-  kids.push(Group({
-    title: "Made by",
-    children: [
-      Row({ title: "Instagram", value: `@${BRAND.instagram}`, chevron: true, onPress: () => openUrl(BRAND.instagramUrl) }),
-      Row({ title: "Discord", subtitle: BRAND.discordId, chevron: true, onPress: () => openUrl(BRAND.discordUrl), onLongPress: () => copy(BRAND.discordId, "The Discord ID") }),
+    paragraphs: [
+      "A Discord tweak. Nothing more, nothing less.",
+      "Plugins and themes, installed from a link. No store, no fuss: paste a URL and it installs.",
+      "Named after Shinobu Oshino. Short temper, sharp blade.",
     ],
   }));
+
+  // plugins + themes
   kids.push(Group({
     children: [
       Row({ title: "Plugins", subtitle: plugins.length ? `${plugins.length} installed · ${on} enabled` : "Add extra functionality", chevron: true, onPress: () => go(props, "plugins", "Plugins") }),
       Row({ title: "Themes", subtitle: active ? `Active: ${readMeta("theme", active.id).name}` : themes.length ? "None active" : "Restyle Discord", chevron: true, onPress: () => go(props, "themes", "Themes") }),
+    ],
+  }));
+
+  // made by
+  kids.push(Group({
+    title: "Made by",
+    children: [
+      Row({ left: InstagramGlyph({ size: 22 }), title: BRAND.instagram, chevron: true, onPress: () => openUrl(BRAND.instagramUrl) }),
+      h(DiscordRow, null),
+    ],
+    footer: "Personal project, do not expect updates. Plugins run with full access to your account, so install only what you trust. Not affiliated with Discord.",
+  }));
+
+  // source + developer
+  kids.push(Group({
+    children: [
+      Row({ title: "Source code", subtitle: "github.com/w-vm/HeartBlade", chevron: true, onPress: () => openUrl(BRAND.repo) }),
       Row({ title: "Developer", subtitle: "Logs, console and client tools", chevron: true, onPress: () => go(props, "developer", "Developer") }),
     ],
   }));
-  kids.push(Group({
-    title: "Info",
-    children: [
-      Row({ title: "Client", value: __HB_VERSION__ }),
-      Row({ title: "Native tweak", value: native.version() }),
-      Row({ title: "Plugins running", value: String(runningPlugins().length) }),
-    ],
-  }));
+
+  // versions (small text, no box)
+  kids.push(SmallLines([
+    `HeartBlade ${__HB_VERSION__}`,
+    si.discord ? `Discord ${si.discord}${si.build ? ` (${si.build})` : ""}` : "",
+    si.model || si.os ? `${si.model ?? "iOS"}${si.os ? ` (${si.os})` : ""}` : "",
+  ]));
   return Screen({ children: kids });
 }
 
@@ -314,7 +353,8 @@ function boundary() {
       if (!err) return (this as any).props.children;
       return Screen({
         children: [
-          Hero({ subtitle: "This page hit an error." }),
+          Hero(),
+          Prose({ paragraphs: ["This page hit an error."] }),
           Group({
             children: [
               Row({ title: "What happened", subtitle: String(err?.message ?? err), lines: 6 }),
