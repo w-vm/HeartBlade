@@ -1,10 +1,11 @@
 #!/bin/sh
-# Downloads the JSI headers (MIT, Meta Platforms) needed to talk to Hermes.
+# Downloads the JSI headers + jsi.cpp (MIT, Meta Platforms) needed to talk to Hermes.
 set -e
 TAG="${RN_TAG:-v0.80.0}"
 BASE="https://raw.githubusercontent.com/facebook/react-native/$TAG/packages/react-native/ReactCommon/jsi/jsi"
-mkdir -p "$(dirname "$0")/../Headers/jsi"
-for f in jsi.h jsi-inl.h; do
-  curl -fsSL "$BASE/$f" -o "$(dirname "$0")/../Headers/jsi/$f"
+DIR="$(dirname "$0")/../Headers/jsi"
+mkdir -p "$DIR"
+for f in jsi.h jsi-inl.h instrumentation.h jsi.cpp; do
+  curl -fsSL "$BASE/$f" -o "$DIR/$f"
 done
-echo "JSI headers ($TAG) ready"
+echo "JSI ($TAG) ready"
