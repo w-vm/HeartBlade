@@ -14,9 +14,24 @@ installMetroHook();
 log(`runtime ${__HB_VERSION__} (native ${native.version()})`);
 
 let booted = false;
+/** Log uncaught JS errors (with the stack) into the HeartBlade log before Discord's own handler shows its crash screen. */
+function hookErrorLog() {
+  try {
+    const EU = (globalThis as any).ErrorUtils;
+    if (!EU?.setGlobalHandler || (EU as any).__hbHooked) return;
+    const prev = EU.getGlobalHandler?.();
+    EU.setGlobalHandler((e: any, fatal?: boolean) => {
+      try { error(`${fatal ? "FATAL " : ""}uncaught`, String(e?.message ?? e), String(e?.stack ?? "").split("\n").slice(0, 12).join(" | ")); } catch { /* ignore */ }
+      if (typeof prev === "function") return prev(e, fatal);
+    });
+    (EU as any).__hbHooked = true;
+  } catch { /* ignore */ }
+}
+
 function boot() {
   if (booted) return;
   booted = true;
+  hookErrorLog();
   try { startEnabledTheme(); } catch (e) { error("theme boot", e); }
   try { startEnabledPlugins(); } catch (e) { error("plugin boot", e); }
   let settings: any = null;

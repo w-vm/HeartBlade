@@ -32,7 +32,7 @@ export const settingsDone = () => done;
 // Crash guard for this feature only: if a launch that enabled it never reached the "ok" mark, it stays off
 // (until a newer client bumps GUARD_VERSION). The shake gesture keeps working either way.
 const GUARD_FILE = "settings-guard.json";
-const GUARD_VERSION = 4;
+const GUARD_VERSION = 5;
 const readGuard = () => native.readJSON<{ v: number; state: string } | null>(GUARD_FILE, null);
 const setGuard = (state: string) => { try { native.writeJSON(GUARD_FILE, { v: GUARD_VERSION, state }); } catch { /* ignore */ } };
 const later = (ms: number, fn: () => void) => { if (typeof setTimeout === "function") setTimeout(fn, ms); };
@@ -51,7 +51,7 @@ export function installSettingsEntry(): SettingsReport {
     if (attempts === 1) {
       const g = readGuard();
       report.guard = g ? `${g.v}:${g.state}` : "none";
-      if (g && g.v === GUARD_VERSION && g.state !== "ok") {
+      if (g && g.v === GUARD_VERSION && (g.state === "rendering" || g.state === "failed")) {
         setGuard("failed");
         done = true;
         warn(`settings: disabled because the previous launch did not finish cleanly (${g.state}); shake still works`);
@@ -105,7 +105,7 @@ export function installSettingsEntry(): SettingsReport {
 
     if (!patched) {
       setGuard("installing");
-      later(20000, () => { if (readGuard()?.state === "installing") setGuard("ok"); });
+      later(5000, () => { if (readGuard()?.state === "installing") setGuard("ok"); });
       after(builders, "createList", (args, ret) => {
         try {
           const sections = args[0]?.sections;
@@ -115,7 +115,7 @@ export function installSettingsEntry(): SettingsReport {
           if (sections.some((s: any) => has(s, KEY))) return;           // already there
           if (inserted === 0) {
             setGuard("rendering");
-            later(10000, () => { if (readGuard()?.state === "rendering") setGuard("ok"); });
+            later(4000, () => { if (readGuard()?.state === "rendering") setGuard("ok"); });
           }
           const at = sections.findIndex((s: any) => has(s, en.SUPPORT));
           sections.splice(at >= 0 ? at : sections.length, 0, { label: "HeartBlade", title: "HeartBlade", settings: [KEY] });
