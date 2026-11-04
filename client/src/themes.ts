@@ -20,13 +20,21 @@ interface Theme {
 }
 
 let undo: Array<() => void> = [];
+let restyled = false;
+
+/** True while an active theme changes backgrounds / the colour palette: the HeartBlade pages then follow Discord's colours instead of plain black. */
+export const themeRestylesColors = () => restyled;
+const touchesBackground = (t: Theme) =>
+  Object.keys(t.semanticColors ?? {}).some((k) => /^(BACKGROUND|CHAT_BACKGROUND)/.test(k)) || Object.keys(t.rawColors ?? {}).length > 0;
 
 export function removeTheme() {
+  restyled = false;
   while (undo.length) { try { undo.pop()!(); } catch { /* ignore */ } }
 }
 
 export function applyTheme(theme: Theme) {
   removeTheme();
+  restyled = touchesBackground(theme);
 
   // 1) Raw colour palette: overwrite in place (restored on removal).
   const rawMod = metro.find((m) => m.unsafe_rawColors || (m.colors && m.meta));
