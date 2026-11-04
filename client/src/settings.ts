@@ -9,7 +9,7 @@ import { log, warn } from "./log";
  */
 export interface SettingsReport {
   rendererFound: boolean; listInserted: boolean; candidates: Array<{ keys: string[] }>; error?: string;
-  unsupported?: boolean; scan?: any; probe?: any; settingsExports?: Array<{ m: number; key: string; kind: string }>; cfgKeyCount?: number; cfgInfo?: any; moduleKeys?: Record<string, string[]>; rendererLike?: Array<{ path: string; keyCount: number; sample: string[] }>; attempts?: number; cfgSample?: string[]; entryShape?: any; hits?: Array<{ path: string; len: number; score: number; head: string[] }>;
+  unsupported?: boolean; scan?: any; scan2?: any; probe?: any; settingsExports?: Array<{ m: number; key: string; kind: string }>; cfgKeyCount?: number; cfgInfo?: any; moduleKeys?: Record<string, string[]>; rendererLike?: Array<{ path: string; keyCount: number; sample: string[] }>; attempts?: number; cfgSample?: string[]; entryShape?: any; hits?: Array<{ path: string; len: number; score: number; head: string[] }>;
 }
 
 interface Hit { arr: string[]; path: string; score: number }
@@ -110,6 +110,50 @@ function scanSettingsScreen() {
   return out;
 }
 
+/** Read-only: find containers keyed by (or listing) the values of UserSettingsPath, i.e. the real settings tree/list. */
+function scanByPathValues() {
+  const res: any = { pathValues: [], hits: [] };
+  const holder = metro.findLoaded((e) => !!e.UserSettingsPath);
+  const enumObj = holder?.UserSettingsPath;
+  if (!enumObj || typeof enumObj !== "object") { res.error = "UserSettingsPath missing"; return res; }
+  const vals = new Set<string>(Object.values(enumObj).filter((v) => typeof v === "string") as string[]);
+  res.pathValues = [...vals].slice(0, 40);
+  let i = 0;
+  for (const m of metro.findAllLoaded(() => true)) {
+    const idx = i++;
+    if (m === enumObj) continue;
+    try {
+      const seen = new Set<any>(); let budget = 3000;
+      const walk = (o: any, depth: number, path: string) => {
+        if (!o || (typeof o !== "object" && typeof o !== "function") || seen.has(o) || depth > 6 || budget-- <= 0) return;
+        seen.add(o);
+        if (o === enumObj) return;
+        let n = 0; let kind = ""; let sample: string[] = [];
+        if (Array.isArray(o)) {
+          kind = "array";
+          for (const x of o.slice(0, 200)) if (typeof x === "string" && vals.has(x)) { n++; if (sample.length < 6) sample.push(x); }
+          if (n < 6) for (let q = 0; q < Math.min(o.length, 40); q++) walk(o[q], depth + 1, `${path}[${q}]`);
+        } else if (o instanceof Map) {
+          kind = "map";
+          for (const k of o.keys()) if (typeof k === "string" && vals.has(k)) { n++; if (sample.length < 6) sample.push(k); }
+        } else if (typeof o === "object" && Object.getPrototypeOf(o) === Object.prototype) {
+          kind = "object";
+          const ks = Object.keys(o).slice(0, 300);
+          for (const k of ks) if (vals.has(k)) { n++; if (sample.length < 6) sample.push(k); }
+          if (n < 6) for (const k of ks.slice(0, 80)) { const d = Object.getOwnPropertyDescriptor(o, k); if (d && "value" in d) walk(d.value, depth + 1, `${path}.${k}`); }
+        }
+        if (n >= 6 && res.hits.length < 10) {
+          let first: any = null;
+          try { const k0 = sample[0]; const v0 = kind === "object" ? (o as any)[k0] : kind === "map" ? o.get(k0) : null; first = v0 && typeof v0 === "object" ? Object.keys(v0).slice(0, 12).map((k) => `${k}:${typeof v0[k]}`) : typeof v0; } catch { /* ignore */ }
+          res.hits.push({ path, kind, n, sample, first });
+        }
+      };
+      walk(m, 0, `m${idx}`);
+    } catch { /* ignore */ }
+  }
+  return res;
+}
+
 let done = false;
 let attempts = 0;
 
@@ -149,13 +193,13 @@ export function installSettingsEntry(): SettingsReport {
         } catch { /* ignore */ }
         if (found.length >= 12) break;
       }
-      report.settingsExports = found;
+      report.settingsExports = found.slice(0, 3);
       // Probe: it may be a lazy getter that returns the real config. Read-only, we only record its shape.
       try {
         const r = (cfg as any)();
         report.probe = { type: typeof r, plain: !!r && Object.getPrototypeOf(r) === Object.prototype, count: r && typeof r === "object" ? Object.keys(r).length : 0, sample: r && typeof r === "object" ? Object.keys(r).slice(0, 15) : [], entry: r && typeof r === "object" ? shapeOf(r[Object.keys(r)[0]]) : null };
       } catch (e: any) { report.probe = { error: String(e?.message ?? e) }; }
-      try { report.scan = scanSettingsScreen(); } catch (e: any) { report.scan = { error: String(e?.message ?? e) }; }
+      try { report.scan = scanSettingsScreen(); report.scan2 = scanByPathValues(); } catch (e: any) { report.scan = { error: String(e?.message ?? e) }; }
       warn("settings: unsupported Discord settings layout, row not added (use the shake gesture)");
       return report;
     }
