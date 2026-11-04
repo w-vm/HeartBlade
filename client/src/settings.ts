@@ -24,12 +24,18 @@ export interface SettingsReport {
 }
 
 const KEY = "HEARTBLADE";
+// Bump when the way the row is built changes, so a previous crash does not disable the new approach forever.
+const REVISION = "2";
+const GUARD = "settings.guard";
+const OFF = "settings.off";
 let done = false;
 let attempts = 0;
 let patched = false;
 let registered = false;
 let inserted = 0;
 let rendered = false;
+let guardChecked = false;
+let disabled = false;
 
 export const settingsDone = () => done;
 
@@ -42,6 +48,12 @@ export function installSettingsEntry(): SettingsReport {
     configRegistered: registered, patched, sectionsInserted: inserted, rowRendered: rendered, attempts: ++attempts,
   };
   try {
+    if (!guardChecked) {
+      guardChecked = true;
+      if (native.exists(GUARD)) { native.removeFile(GUARD); native.writeFile(OFF, REVISION); warn("settings: the previous launch crashed while the settings row was active, row disabled"); }
+      disabled = native.readFile(OFF) === REVISION;
+    }
+    if (disabled) { done = true; report.error = "disabled after a crash (use the shake gesture)"; return report; }
     const builders: any = metro.findLoaded((e) => typeof e.createPressable === "function" && typeof e.createList === "function");
     report.builders = !!builders;
 
@@ -70,13 +82,11 @@ export function installSettingsEntry(): SettingsReport {
     }
 
     if (!registered) {
-      const entry = builders.createPressable({
-        useTitle: () => { rendered = true; return "HeartBlade"; },
-        // Some renderers always mount IconComponent, so never leave it undefined.
-        IconComponent: icon ?? (() => null),
-        onPress: () => native.openPanel(),
-        withArrow: true,
-      });
+      // Clone a real, simple pressable (Acknowledgements) so every field the renderer expects (parent, icon,
+      // predicates, arrow, ...) exists, and only override what is ours.
+      const base = cfg[en.ACKNOWLEDGEMENTS];
+      if (!base || typeof base !== "object") { done = true; report.error = "template setting not found"; warn("settings: template setting not found, row not added"); return report; }
+      const entry = { ...base, useTitle: () => { rendered = true; return "HeartBlade"; }, onPress: () => native.openPanel() };
       report.frozen = Object.isFrozen(cfg) || !Object.isExtensible(cfg);
       if (!report.frozen) {
         cfg[KEY] = entry;
@@ -99,9 +109,13 @@ export function installSettingsEntry(): SettingsReport {
           const has = (s: any, k: any) => Array.isArray(s?.settings) && s.settings.includes(k);
           if (!secs.some((s: any) => has(s, en.ACCOUNT))) return;   // only the settings overview list
           if (secs.some((s: any) => has(s, KEY))) return;           // already there
+          const at = secs.findIndex((s: any) => has(s, en.SUPPORT));
+          if (at < 0) return;                                         // unknown layout: leave it alone
           const next = secs.slice();
-          const at = next.findIndex((s: any) => has(s, en.SUPPORT));
-          next.splice(at >= 0 ? at : next.length, 0, { label: "HeartBlade", settings: [KEY] });
+          next[at] = { ...secs[at], settings: [...secs[at].settings, KEY] };
+          // If the screen crashes right after this, the next launch disables the row (see GUARD).
+          native.writeFile(GUARD, REVISION);
+          setTimeout(() => native.removeFile(GUARD), 20000);
           inserted++;
           return [{ ...opts, sections: next }, ...args.slice(1)];
         } catch { /* never break Discord's settings screen */ }
