@@ -122,7 +122,7 @@ const alerts = []; const opened = [];
 const RN = {
   AppRegistry: {},
   Alert: { alert: (t, m, b) => alerts.push({ t, m, b }), prompt: (t, m, b, ...rest) => alerts.push({ t, m, b, prompt: true, rest }) },
-  View: "View", Text: "Text", ScrollView: "ScrollView", Pressable: "Pressable", Image: "Image", TextInput: "TextInput",
+  View: "View", Text: "Text", ScrollView: "ScrollView", Pressable: "Pressable", Image: "Image", TextInput: "TextInput", Modal: "Modal",
   Switch: (props) => { if (globalThis.__boom) throw new Error("boom"); return React.createElement("Switch", props); },
   StyleSheet: { hairlineWidth: 1 }, Linking: { openURL: (u) => opened.push(u) },
 };
@@ -168,7 +168,7 @@ const icon = React.createElement(conf.HEARTBLADE.IconComponent, { size: 24, colo
 mount(() => icon, {});
 const img = all(tree, (n) => n.type === "Image")[0];
 assert.ok(img.props.source.uri.startsWith("data:image/png;base64,"), "logo is an embedded PNG");
-assert.equal(img.props.style.tintColor, "#fff");
+assert.equal(img.props.style.tintColor, undefined, "icon is shown in full colour, not tinted");
 
 // ===== 2. root page =====
 const navCalls = []; const navOpts = [];
@@ -176,14 +176,21 @@ const nav = { push: (r, p) => navCalls.push([r, p]), setOptions: (o) => navOpts.
 const Root = conf.HEARTBLADE.screen.getComponent();
 const Sub = conf.HEARTBLADE_PAGE.screen.getComponent();
 mount(Root, { navigation: nav, route: {} });
-for (const t of ["HeartBlade", "Plugins", "Themes", "Developer", "About"]) assert.ok(has(t), `root shows ${t}`);
+for (const t of ["HeartBlade", "Plugins", "Themes", "Developer", "About", "Made by", "Instagram", "@wvm", "233320628235665408", "Info", "Client", "Native tweak"]) assert.ok(has(t), `root shows ${t}`);
+assert.equal(all(tree, (n) => n.type === "Text" && n.children.includes("Made by")).length, 1, "single Made by credit");
+const gif = all(tree, (n) => n.type === "Image" && n.props.source?.uri?.endsWith(".gif"))[0];
+assert.ok(gif, "banner gif is on the main page");
+gif.props.onError(); await flush();
+assert.ok(!all(tree, (n) => n.type === "Image" && n.props.source?.uri?.endsWith(".gif")).length, "gif hides itself on load error");
+assert.ok(!texts(tree).some((s) => /[\u{1F300}-\u{1FAFF}\u{2139}\u{FE0F}]/u.test(s)), "no emojis");
 assert.ok(has("1 installed · 1 enabled"), "plugin counts");
 assert.ok(has("Active: Crimson"), "active theme name");
 assert.ok(!has("Restart Discord to apply"), "no restart banner yet");
 await press("Plugins");
 assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "plugins", title: "Plugins" }], "Plugins pushes onto Discord's navigator");
 await press("Developer"); assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "developer", title: "Developer" }]);
-await press("About"); assert.equal(navCalls.pop()[1].page, "about");
+await press("Instagram"); await press("Discord");
+assert.deepEqual(opened.splice(0), ["https://instagram.com/wvm", "https://discord.com/users/233320628235665408"], "credit links open");
 
 const open = (page, title) => mount(Sub, { navigation: nav, route: { params: { page, title } } });
 
@@ -191,27 +198,36 @@ const open = (page, title) => mount(Sub, { navigation: nav, route: { params: { p
 open("plugins", "Plugins");
 assert.deepEqual(navOpts.pop(), { title: "Plugins" }, "header title is set");
 assert.ok(has("Hello") && has("v1.0.0 · wvm"), "installed plugin listed with metadata");
+await press("+");
 await type("https://…/my-plugin/", "https://x.test/p/");
 await press("Install");
 assert.ok(existsSync(P("plugins/cool-plug/index.js")), "plugin script written");
 assert.equal(JSON.parse(readFileSync(P("plugins/cool-plug/manifest.json"), "utf8")).version, "1.2.3");
 const reg = () => JSON.parse(readFileSync(P("registry.json"), "utf8"));
 assert.ok(reg().some((e) => e.id === "cool-plug" && e.type === "plugin" && e.enabled), "registry updated");
-assert.equal(alerts.pop().t, "Installed “Cool Plug”");
+assert.ok(has("Success") && has("Installed “Cool Plug”"), "dialog reports success");
+await press("Done");
+assert.ok(!all(tree, (n) => n.type === "Modal").length, "dialog closes");
 assert.ok(has("Cool Plug") && has("Restart Discord to apply your changes."), "list + restart banner");
 await toggle("Hello", false);
 assert.equal(reg().find((e) => e.id === "hello").enabled, false, "toggle persisted");
+await press("+");
 await type("https://…/my-plugin/", "https://x.test/missing/");
 await press("Install");
-assert.equal(alerts.pop().t, "Install failed", "bad link reports an error");
+assert.ok(has("Failed"), "bad link reports a failure in the dialog");
+assert.ok(row("Retry"), "can retry");
+await press("Cancel");
 await press("Cool Plug"); const det = alerts.pop(); assert.equal(det.t, "Cool Plug"); assert.ok(det.b.some((b) => b.text === "Remove"));
 
 // ===== 4. themes page =====
 open("themes", "Themes");
 assert.ok(has("Crimson"));
+await press("+");
 await type("https://…/theme.json", "https://x.test/bad.json"); await press("Install");
-assert.equal(alerts.pop().t, "Install failed");
+assert.ok(has("Failed"));
 await type("https://…/theme.json", "https://x.test/t.json"); await press("Install");
+assert.ok(has("Success"));
+await press("Done");
 assert.ok(existsSync(P("themes/neon-night.json")));
 assert.deepEqual(reg().filter((e) => e.type === "theme").map((e) => [e.id, e.enabled]), [["crimson", false], ["neon-night", true]], "one active theme");
 
@@ -241,7 +257,7 @@ const rs = alerts.pop(); rs.b[1].onPress(); assert.equal(state.restarted, true, 
 await press("Logs"); assert.equal(navCalls.pop()[1].page, "logs");
 await press("JS console"); assert.equal(navCalls.pop()[1].page, "console");
 
-// ===== 6. logs / console / about =====
+// ===== 6. logs / console =====
 open("logs", "Logs");
 assert.ok(has("ERROR broken") && has("WARN careful"));
 const order = texts(tree).filter((t) => /^10:00/.test(t)); assert.ok(order[0].includes("ERROR"), "newest first");
@@ -252,14 +268,9 @@ await type("Type JavaScript…", "1 + 2"); await press("Run");
 assert.ok(has("> 1 + 2") && texts(tree).includes("3"), "console evaluates");
 await type("Type JavaScript…", "throw new Error('nope')"); await press("Run");
 assert.ok(has("nope"), "console shows errors");
-await type("Type JavaScript…", "__hb.version"); await press("Run"); assert.ok(has('"0.2.0"'), "__hb is available");
+await type("Type JavaScript…", "__hb.version"); await press("Run"); assert.ok(has(JSON.stringify(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version)), "__hb is available");
 
-open("about", "About");
-assert.ok(has("Shinobu Oshino") && has("MIT © wvm"));
-const gif = all(tree, (n) => n.type === "Image" && n.props.source?.uri?.endsWith(".gif"))[0];
-assert.ok(gif, "about banner gif is shown");
-gif.props.onError(); await flush();
-assert.ok(!all(tree, (n) => n.type === "Image" && n.props.source?.uri?.endsWith(".gif")).length, "gif hides itself on load error");
+await mount(Root, { navigation: nav, route: {} });
 await press("Source code"); assert.deepEqual(opened, ["https://github.com/w-vm/HeartBlade"]);
 
 // ===== 7. unknown page falls back to root; crash shows the error screen =====
