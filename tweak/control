@@ -1,6 +1,6 @@
 Package: dev.heartblade.tweak
 Name: Heartblade
-Version: 0.1.0
+Version: 0.2.0
 Architecture: iphoneos-arm
 Description: Heartblade — plugin & theme loader for Discord
 Maintainer: Heartblade

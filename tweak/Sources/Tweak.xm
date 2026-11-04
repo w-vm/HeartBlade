@@ -27,6 +27,12 @@ static void Define(jsi::Runtime &rt, jsi::Object &obj, const char *name, unsigne
     obj.setProperty(rt, name, jsi::Function::createFromHostFunction(rt, jsi::PropNameID::forUtf8(rt, name), argc, std::move(fn)));
 }
 
+static jsi::Value JSONValue(jsi::Runtime &rt, id obj) {
+    NSData *d = obj ? [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil] : nil;
+    if (!d) return jsi::Value::null();
+    return jsi::String::createFromUtf8(rt, (const uint8_t *)d.bytes, d.length);
+}
+
 static void InstallHostObject(jsi::Runtime &rt) {
     jsi::Object host(rt);
     host.setProperty(rt, "version", jsi::String::createFromUtf8(rt, [HB_VERSION UTF8String]));
@@ -80,6 +86,38 @@ static void InstallHostObject(jsi::Runtime &rt) {
     });
     Define(rt, host, "setSettingsEntry", 1, [](jsi::Runtime &, const jsi::Value &, const jsi::Value *a, size_t n) -> jsi::Value {
         HBSettingsEntryActive = n > 0 && a[0].isBool() && a[0].getBool();
+        return jsi::Value::undefined();
+    });
+
+    // ---- added in 0.2.0: used by the JS settings pages (Developer, Logs, About) ----
+    Define(rt, host, "getPrefs", 0, [](jsi::Runtime &rt, const jsi::Value &, const jsi::Value *, size_t) -> jsi::Value {
+        NSDictionary *p = @{ @"devURL": HBDevURL() ?: @"", @"bundleURL": HBBundleSourceURL().absoluteString ?: @"",
+                             @"client": @(HBClientEnabled()), @"shake": @(HBShakeEnabled()) };
+        return JSONValue(rt, p);
+    });
+    Define(rt, host, "setPref", 2, [](jsi::Runtime &rt, const jsi::Value &, const jsi::Value *a, size_t n) -> jsi::Value {
+        NSString *key = [NSString stringWithUTF8String:Str(rt, a, n, 0).c_str()] ?: @"";
+        NSString *val = [NSString stringWithUTF8String:Str(rt, a, n, 1).c_str()] ?: @"";
+        if ([key isEqualToString:@"devURL"]) HBSetDevURL(val);
+        else if ([key isEqualToString:@"client"]) HBSetClientEnabled([val isEqualToString:@"1"]);
+        else if ([key isEqualToString:@"shake"]) HBSetShakeEnabled([val isEqualToString:@"1"]);
+        else return false;
+        return true;
+    });
+    Define(rt, host, "getLogs", 0, [](jsi::Runtime &rt, const jsi::Value &, const jsi::Value *, size_t) -> jsi::Value {
+        return JSONValue(rt, HBLogLines());
+    });
+    Define(rt, host, "debugReport", 0, [](jsi::Runtime &rt, const jsi::Value &, const jsi::Value *, size_t) -> jsi::Value {
+        NSString *r = HBDebugReport() ?: @"";
+        return jsi::String::createFromUtf8(rt, (const uint8_t *)r.UTF8String, strlen(r.UTF8String));
+    });
+    Define(rt, host, "copy", 1, [](jsi::Runtime &rt, const jsi::Value &, const jsi::Value *a, size_t n) -> jsi::Value {
+        NSString *t = [NSString stringWithUTF8String:Str(rt, a, n, 0).c_str()] ?: @"";
+        dispatch_async(dispatch_get_main_queue(), ^{ UIPasteboard.generalPasteboard.string = t; });
+        return jsi::Value::undefined();
+    });
+    Define(rt, host, "restart", 0, [](jsi::Runtime &, const jsi::Value &, const jsi::Value *, size_t) -> jsi::Value {
+        dispatch_async(dispatch_get_main_queue(), ^{ exit(0); });
         return jsi::Value::undefined();
     });
 
