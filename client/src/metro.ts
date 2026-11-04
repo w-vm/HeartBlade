@@ -122,4 +122,10 @@ export function lazy<T = any>(resolver: () => T): () => T {
   return () => (done ? (cached as T) : ((cached = resolver()), (done = !!cached), cached as T));
 }
 
+/** Calls `cb` for every already-initialised module (exports object and its `default`). Never initialises anything. */
+export function forEachLoaded(cb: (exports: any, id: number) => void) {
+  for (const [id, ex] of exportsOf(false)) for (const c of candidates(ex)) { try { cb(c, id); } catch { /* ignore */ } }
+}
+export const candidatesOf = candidates;
+
 export const moduleCount = () => registry.size;
