@@ -1,7 +1,7 @@
 import { installMetroHook, findLoaded, byProps, onModuleInit, findByProps, findByName, findByStoreName, find, findAll } from "./metro";
 import { readPrefs } from "./prefs";
 import { startEnabledPlugins } from "./plugins";
-import { startEnabledTheme } from "./themes";
+import { startEnabledTheme, applyTheme, removeTheme } from "./themes";
 import * as native from "./native";
 import { installSettingsEntry, settingsDone, settingsStats } from "./settings";
 import { runningPlugins } from "./plugins";
@@ -11,7 +11,7 @@ import { log, error } from "./log";
 // Must happen synchronously, before Discord's own bundle registers its modules.
 installMetroHook();
 
-(globalThis as any).__hb = { version: __HB_VERSION__, native: native.hasNative(), metro: { find, findAll, findByProps, findByName, findByStoreName } }; // handy in Developer > JS console
+(globalThis as any).__hb = { version: __HB_VERSION__, native: native.hasNative(), metro: { find, findAll, findByProps, findByName, findByStoreName }, theme: { apply: applyTheme, remove: removeTheme } }; // handy in Developer > JS console
 log(`runtime ${__HB_VERSION__} (native ${native.version()})`);
 
 let booted = false;
