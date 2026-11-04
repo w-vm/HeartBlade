@@ -6,7 +6,7 @@ import { runningPlugins } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, needsRestart, markChanged } from "../manager";
-import { RN, RX, h, palette, Screen, Hero, Group, Row, SwitchRow, Banner, Field, Note, LogoImage, alert, confirm, prompt, copy, readClipboard, openUrl, discordIcon } from "./kit";
+import { RN, RX, h, palette, Screen, Hero, Group, Row, SwitchRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl } from "./kit";
 
 export const PAGE_ROUTE = "HEARTBLADE_PAGE";
 
@@ -40,26 +40,50 @@ const restartNow = () => confirm("Restart Discord?", "Discord will close. Open i
 // ---- root ---------------------------------------------------------------------------------------------------
 
 function RootPage(props: any) {
+  const { useState } = RX();
+  const { View, Image } = RN(); const P = palette();
   useRefresh(props);
+  const [gifFailed, setGifFailed] = useState(false);
   const plugins = listEntries("plugin"), themes = listEntries("theme");
   const on = plugins.filter((e) => e.enabled).length;
   const active = themes.find((e) => e.enabled);
   const kids: any[] = [
-    Hero({ subtitle: BRAND.tagline, badge: `v${__HB_VERSION__}` }),
+    Hero({ subtitle: BRAND.tagline, badge: `v${__HB_VERSION__}`, quote: BRAND.quote }),
   ];
+  if (BRAND.aboutGif && !gifFailed) {
+    kids.push(h(View, { style: { height: 170, borderRadius: 12, overflow: "hidden", backgroundColor: P.card, marginBottom: 22 } },
+      h(Image, { source: { uri: BRAND.aboutGif }, resizeMode: "cover", style: { width: "100%", height: "100%" }, onError: () => setGifFailed(true) })));
+  }
   if (needsRestart()) kids.push(Banner({ text: "Changes saved. Restart Discord to apply them.", action: "Restart", onAction: restartNow }));
   kids.push(Group({
+    title: "About",
     children: [
-      Row({ title: "Plugins", subtitle: plugins.length ? `${plugins.length} installed · ${on} enabled` : "Add extra functionality", icon: discordIcon("PuzzlePieceIcon", "ExtensionIcon"), emoji: "🧩", iconTint: "#5865f2", chevron: true, onPress: () => go(props, "plugins", "Plugins") }),
-      Row({ title: "Themes", subtitle: active ? `Active: ${readMeta("theme", active.id).name}` : themes.length ? "None active" : "Restyle Discord", icon: discordIcon("PaintPaletteIcon", "PaletteIcon"), emoji: "🎨", iconTint: "#e32945", chevron: true, onPress: () => go(props, "themes", "Themes") }),
-      Row({ title: "Developer", subtitle: "Logs, console and client tools", icon: discordIcon("WrenchIcon", "TerminalIcon", "CodeIcon"), emoji: "🛠", iconTint: "#3ba55d", chevron: true, onPress: () => go(props, "developer", "Developer") }),
+      Row({ title: "Source code", subtitle: "github.com/w-vm/HeartBlade", chevron: true, onPress: () => openUrl(BRAND.repo) }),
+      Row({ title: "Latest release", chevron: true, onPress: () => openUrl(BRAND.releases) }),
+    ],
+    footer: "Plugins and themes installed from a link. Plugins run with full access to your account, so install only what you trust. Personal project, updates are not guaranteed. Not affiliated with Discord.",
+  }));
+  kids.push(Group({
+    title: "Made by",
+    children: [
+      Row({ title: "Instagram", value: `@${BRAND.instagram}`, chevron: true, onPress: () => openUrl(BRAND.instagramUrl) }),
+      Row({ title: "Discord", subtitle: BRAND.discordId, chevron: true, onPress: () => openUrl(BRAND.discordUrl), onLongPress: () => copy(BRAND.discordId, "The Discord ID") }),
     ],
   }));
   kids.push(Group({
     children: [
-      Row({ title: "About", subtitle: "Version, credits and license", icon: discordIcon("CircleInformationIcon", "InfoIcon"), emoji: "ℹ️", iconTint: "#747f8d", chevron: true, onPress: () => go(props, "about", "About") }),
+      Row({ title: "Plugins", subtitle: plugins.length ? `${plugins.length} installed · ${on} enabled` : "Add extra functionality", chevron: true, onPress: () => go(props, "plugins", "Plugins") }),
+      Row({ title: "Themes", subtitle: active ? `Active: ${readMeta("theme", active.id).name}` : themes.length ? "None active" : "Restyle Discord", chevron: true, onPress: () => go(props, "themes", "Themes") }),
+      Row({ title: "Developer", subtitle: "Logs, console and client tools", chevron: true, onPress: () => go(props, "developer", "Developer") }),
     ],
-    footer: `HeartBlade ${__HB_VERSION__} · native ${native.version()}`,
+  }));
+  kids.push(Group({
+    title: "Info",
+    children: [
+      Row({ title: "Client", value: __HB_VERSION__ }),
+      Row({ title: "Native tweak", value: native.version() }),
+      Row({ title: "Plugins running", value: String(runningPlugins().length) }),
+    ],
   }));
   return Screen({ children: kids });
 }
@@ -71,22 +95,8 @@ function ManagerPage(props: any) {
   const kind: Kind = props.kind;
   const isPlugin = kind === "plugin";
   const bump = useRefresh(props);
-  const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
   const entries = listEntries(kind);
-
-  const install = () => {
-    const link = url.trim();
-    if (busy || !link) return;
-    setBusy(true);
-    (isPlugin ? installPlugin : installTheme)(link).then((msg) => {
-      setUrl(""); bump();
-      alert(msg, "Restart Discord to apply.");
-    }, (e: any) => {
-      error("install failed", e?.message ?? e);
-      alert("Install failed", String(e?.message ?? e));
-    }).then(() => setBusy(false));
-  };
 
   const details = (id: string, link: string) => {
     const m = readMeta(kind, id);
@@ -103,22 +113,26 @@ function ManagerPage(props: any) {
   const kids: any[] = [];
   if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
   kids.push(Group({
-    title: `Installed${entries.length ? ` · ${entries.length}` : ""}`,
+    title: `${isPlugin ? "Plugins" : "Themes"}${entries.length ? ` · ${entries.length}` : ""}`,
+    headerRight: PlusButton({ onPress: () => setAdding(true) }),
     footer: entries.length ? "Tap an item for details or to remove it." : undefined,
-    children: rows.length ? rows : [Row({ title: isPlugin ? "No plugins yet" : "No themes yet", subtitle: "Paste a link below to add one.", center: true })],
+    children: rows.length ? rows : [Row({ title: isPlugin ? "No plugins yet" : "No themes yet", subtitle: "Tap + to add one from a link.", center: true })],
   }));
-  kids.push(Group({
-    title: isPlugin ? "Add a plugin" : "Add a theme",
-    footer: isPlugin
-      ? "A folder with manifest.json + index.js, a manifest.json link, or a single .js file. Plugins run with full access to your account — only install code you trust."
-      : "A .json file that uses Discord’s colour token names (semanticColors / rawColors).",
-    children: [
-      Field({ value: url, onChange: setUrl, placeholder: isPlugin ? "https://…/my-plugin/" : "https://…/theme.json", onSubmit: install }),
-      Row({ title: busy ? "Installing…" : "Install", accent: true, center: true, onPress: install }),
-      Row({ title: "Paste from clipboard", center: true, onPress: () => readClipboard().then((s) => { if (s) setUrl(s.trim()); else alert("Clipboard is empty"); }) }),
-    ],
-  }));
-  return Screen({ children: kids });
+  // The dialog sits next to the screen (not inside the list), so a restart banner appearing above does not remount it.
+  return h(RX().Fragment, null,
+    Screen({ children: kids }),
+    adding
+      ? h(AddDialog, {
+        title: isPlugin ? "Add a plugin" : "Add a theme",
+        hint: isPlugin
+          ? "A folder with manifest.json + index.js, a manifest.json link, or a single .js file. Plugins run with full access to your account, so only install code you trust."
+          : "A .json file that uses Discord’s colour token names (semanticColors / rawColors).",
+        placeholder: isPlugin ? "https://…/my-plugin/" : "https://…/theme.json",
+        install: (link: string) => (isPlugin ? installPlugin : installTheme)(link),
+        onChanged: bump,
+        onClose: () => { setAdding(false); bump(); },
+      })
+      : null);
 }
 
 // ---- developer ----------------------------------------------------------------------------------------------
@@ -151,8 +165,8 @@ function DeveloperPage(props: any) {
   kids.push(Group({
     title: "Debug",
     children: [
-      Row({ title: "Logs", subtitle: "Live HeartBlade log", emoji: "📜", iconTint: "#747f8d", chevron: true, onPress: () => go(props, "logs", "Logs") }),
-      Row({ title: "JS console", subtitle: "Run code inside Discord", emoji: "⌨️", iconTint: "#747f8d", chevron: true, onPress: () => go(props, "console", "JS console") }),
+      Row({ title: "Logs", subtitle: "Live HeartBlade log", chevron: true, onPress: () => go(props, "logs", "Logs") }),
+      Row({ title: "JS console", subtitle: "Run code inside Discord", chevron: true, onPress: () => go(props, "console", "JS console") }),
       Row({ title: "Copy debug report", onPress: () => copy(native.debugReport() || fallbackReport(), "The debug report") }),
     ],
   }));
@@ -276,43 +290,6 @@ function ConsolePage(_props: any) {
   });
 }
 
-// ---- about --------------------------------------------------------------------------------------------------
-
-function AboutPage(_props: any) {
-  const { useState } = RX();
-  const { View, Image } = RN(); const P = palette();
-  const [gifFailed, setGifFailed] = useState(false);
-  const kids: any[] = [Hero({ subtitle: BRAND.tagline, badge: `v${__HB_VERSION__}`, quote: BRAND.quote })];
-  if (BRAND.aboutGif && !gifFailed) {
-    kids.push(h(View, { style: { height: 190, borderRadius: 16, overflow: "hidden", backgroundColor: P.card, marginBottom: 22 } },
-      h(Image, { source: { uri: BRAND.aboutGif }, resizeMode: "cover", style: { width: "100%", height: "100%" }, onError: () => setGifFailed(true) })));
-  }
-  kids.push(Group({
-    title: "HeartBlade",
-    children: [
-      Row({ title: "Client", value: __HB_VERSION__ }),
-      Row({ title: "Native tweak", value: native.version() }),
-      Row({ title: "License", value: `${BRAND.license} © ${BRAND.author}` }),
-    ],
-  }));
-  kids.push(Group({
-    title: "Credits",
-    children: [
-      Row({ title: "Made by", value: BRAND.author }),
-      Row({ title: "Name & attitude", value: "Shinobu Oshino" }),
-    ],
-  }));
-  kids.push(Group({
-    title: "Links",
-    children: [
-      Row({ title: "Source code", subtitle: "github.com/w-vm/HeartBlade", chevron: true, onPress: () => openUrl(BRAND.repo) }),
-      Row({ title: "Latest release", chevron: true, onPress: () => openUrl(BRAND.releases) }),
-    ],
-  }));
-  kids.push(Note("Personal project — updates are not guaranteed. Plugins run with full access to your account, so install only what you trust. Not affiliated with Discord."));
-  return Screen({ children: kids });
-}
-
 // ---- screens ------------------------------------------------------------------------------------------------
 
 const PAGES: Record<string, (p: any) => any> = {
@@ -322,7 +299,6 @@ const PAGES: Record<string, (p: any) => any> = {
   developer: (p) => h(DeveloperPage, p),
   logs: (p) => h(LogsPage, p),
   console: (p) => h(ConsolePage, p),
-  about: (p) => h(AboutPage, p),
 };
 
 let Boundary: any;
