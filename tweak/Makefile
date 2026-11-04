@@ -11,7 +11,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Heartblade
 
-Heartblade_FILES = Sources/Tweak.xm Sources/Store.m Sources/Panel.m
+Heartblade_FILES = Sources/Tweak.xm Sources/Store.m Sources/Panel.m Headers/jsi/jsi.cpp
 Heartblade_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -I$(THEOS_PROJECT_DIR)/Headers \
 	-DHB_VERSION='@"$(THEOS_PACKAGE_BASE_VERSION)"' -DHB_BUNDLE_URL='@"$(HB_BUNDLE_URL)"'
 Heartblade_CCFLAGS = -std=c++17 -Wno-c++11-narrowing
