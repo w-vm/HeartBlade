@@ -24,3 +24,17 @@ export const nativeLog = (line: string) => { try { n()?.log?.(line); } catch { /
 export const setInfo = (json: string) => { try { n()?.setInfo?.(json); } catch { /* ignore */ } };
 export const openPanel = () => { try { n()?.openPanel?.(); } catch { /* ignore */ } };
 export const setSettingsEntry = (on: boolean) => { try { n()?.setSettingsEntry?.(on); } catch { /* ignore */ } };
+
+// ---- host functions added in 0.2.0 (optional: an older .deb simply does not provide them) ----
+export interface NativePrefs { devURL: string; bundleURL: string; client: boolean; shake: boolean; }
+export const hasPrefsApi = () => typeof n()?.getPrefs === "function";
+export function getPrefs(): NativePrefs | null {
+  try { const raw = n()?.getPrefs?.(); return raw ? (JSON.parse(raw) as NativePrefs) : null; } catch { return null; }
+}
+export const setPref = (name: string, value: string) => { try { return !!n()?.setPref?.(name, value); } catch { return false; } };
+export function getLogs(): string[] {
+  try { const raw = n()?.getLogs?.(); return raw ? (JSON.parse(raw) as string[]) : []; } catch { return []; }
+}
+export const debugReport = (): string => { try { return n()?.debugReport?.() ?? ""; } catch { return ""; } };
+export const copyText = (text: string): boolean => { try { if (typeof n()?.copy !== "function") return false; n()!.copy!(text); return true; } catch { return false; } };
+export const restartApp = (): boolean => { try { if (typeof n()?.restart !== "function") return false; n()!.restart!(); return true; } catch { return false; } };

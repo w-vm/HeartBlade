@@ -1,4 +1,5 @@
-import { installMetroHook, findLoaded, byProps, onModuleInit } from "./metro";
+import { installMetroHook, findLoaded, byProps, onModuleInit, findByProps, findByName, findByStoreName, find, findAll } from "./metro";
+import { readPrefs } from "./prefs";
 import { startEnabledPlugins } from "./plugins";
 import { startEnabledTheme } from "./themes";
 import * as native from "./native";
@@ -10,7 +11,7 @@ import { log, error } from "./log";
 // Must happen synchronously, before Discord's own bundle registers its modules.
 installMetroHook();
 
-(globalThis as any).__hb = { version: __HB_VERSION__, native: native.hasNative() };
+(globalThis as any).__hb = { version: __HB_VERSION__, native: native.hasNative(), metro: { find, findAll, findByProps, findByName, findByStoreName } }; // handy in Developer > JS console
 log(`runtime ${__HB_VERSION__} (native ${native.version()})`);
 
 let booted = false;
@@ -32,8 +33,11 @@ function boot() {
   if (booted) return;
   booted = true;
   hookErrorLog();
-  try { startEnabledTheme(); } catch (e) { error("theme boot", e); }
-  try { startEnabledPlugins(); } catch (e) { error("plugin boot", e); }
+  if (readPrefs().safeMode) log("safe mode is on: plugins and theme are not loaded (Developer > Safe mode)");
+  else {
+    try { startEnabledTheme(); } catch (e) { error("theme boot", e); }
+    try { startEnabledPlugins(); } catch (e) { error("plugin boot", e); }
+  }
   let settings: any = null;
   try { settings = installSettingsEntry(); } catch (e) { error("settings boot", e); }
   let last: any = settings;

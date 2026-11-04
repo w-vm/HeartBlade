@@ -2,6 +2,9 @@ import * as metro from "./metro";
 import * as native from "./native";
 import { log, warn } from "./log";
 import { after } from "./patcher";
+import { RootScreen, PageScreen, PAGE_ROUTE } from "./ui/pages";
+import { LogoImage } from "./ui/kit";
+import { setDiagHooks } from "./diag";
 
 /**
  * Adds a "HeartBlade" row to the mobile Discord settings screen (same idea as Rain's settings/patches/tabs.tsx):
@@ -9,7 +12,11 @@ import { after } from "./patcher";
  *   2. createList({ sections: [{ label, settings: [keys] }] }) (SettingBuilders) gets an "after" hook that splices an
  *      extra section into the overview screen's section array.
  *
- * What changed vs. 0.1.0 (row never appeared: sectionsInserted stayed 0):
+ * 0.2.0: the row is now a real Discord "route" (same navigator / push animation as every other settings page) that opens
+ * our own pages (src/ui/pages.ts) instead of a native modal. It is inserted at the very top of the overview list and uses
+ * the HeartBlade logo instead of the borrowed "i" icon. The old native panel is still reachable by shaking the phone.
+ *
+ * What changed in 0.1.1 (row never appeared: sectionsInserted stayed 0):
  *   - We no longer poll for the settings modules. Discord loads them lazily, the first time Settings opens, and the
  *     overview list is built in that same render, so a 2s poll always installed the hook one render too late.
  *     Now every module is inspected the moment its factory finishes (before anything can call it), plus a scan of
@@ -42,6 +49,7 @@ let targetCount = 0;
 const patchErrors: string[] = [];
 
 export const settingsDone = () => done;
+setDiagHooks({ stats: () => settingsStats(), resetGuard: () => setGuard("ok", 0) });
 
 // ---- crash guard (this feature only; the shake gesture keeps working either way) --------------------------------
 // "rendering" is set when the row is first inserted and becomes "ok" after 4s. If the app died in between, that is one
@@ -49,7 +57,7 @@ export const settingsDone = () => done;
 // guard version is bumped. (Before, a single strike - e.g. closing the app within 4s of opening Settings - locked it
 // off forever.)
 const GUARD_FILE = "settings-guard.json";
-const GUARD_VERSION = 6;
+const GUARD_VERSION = 7;
 type Guard = { v: number; state: string; fails?: number };
 const readGuard = () => native.readJSON<Guard | null>(GUARD_FILE, null);
 const setGuard = (state: string, fails = 0) => { try { native.writeJSON(GUARD_FILE, { v: GUARD_VERSION, state, fails }); } catch { /* ignore */ } };
@@ -59,16 +67,20 @@ const isPlain = (o: any) => !!o && typeof o === "object" && Object.getPrototypeO
 const keyCount = (o: any) => { try { return Object.keys(o).length; } catch { return 0; } };
 const asEnum = (): any => { try { return metro.findLoaded((e) => isPlain(e.MobileUserSettings))?.MobileUserSettings; } catch { return undefined; } };
 
-let borrowedIcon: any;
-const iconFrom = (cfg: any) => {
-  if (typeof borrowedIcon === "function") return borrowedIcon;
-  try {
-    const en = asEnum();
-    const i = cfg?.[en?.ACKNOWLEDGEMENTS ?? "ACKNOWLEDGEMENTS"]?.IconComponent ?? cfg?.[en?.ACCOUNT ?? "ACCOUNT"]?.IconComponent;
-    if (typeof i === "function") borrowedIcon = i;
-  } catch { /* ignore */ }
-  return typeof borrowedIcon === "function" ? borrowedIcon : () => null; // never leave IconComponent undefined
-};
+const HBIcon = (props: any) => LogoImage(props);
+
+let entries: Record<string, any> | undefined;
+/** Built once, so Discord's navigator always sees the same screen objects / component identities. */
+function ourEntries(): Record<string, any> {
+  if (entries) return entries;
+  const useTitle = () => { rendered = true; return "HeartBlade"; };
+  entries = {
+    [KEY]: { type: "route", title: () => "HeartBlade", useTitle, IconComponent: HBIcon, withArrow: true, screen: { route: KEY, getComponent: () => RootScreen } },
+    // generic sub page (plugins / themes / developer / ...): navigation.push(PAGE_ROUTE, { page, title })
+    [PAGE_ROUTE]: { type: "route", title: () => "HeartBlade", useTitle: () => "HeartBlade", IconComponent: HBIcon, screen: { route: PAGE_ROUTE, getComponent: () => PageScreen } },
+  };
+  return entries;
+}
 
 function registerConfig(holder: any) {
   if (registered) return;
@@ -79,16 +91,7 @@ function registerConfig(holder: any) {
   const ok = Reflect.defineProperty(holder, "SETTING_RENDERER_CONFIG", {
     enumerable: true,
     configurable: true,
-    get: () => ({
-      ...original,
-      [KEY]: {
-        type: "pressable",
-        IconComponent: iconFrom(original),
-        useTitle: () => { rendered = true; return "HeartBlade"; },
-        onPress: () => native.openPanel(),
-        withArrow: true,
-      },
-    }),
+    get: () => ({ ...original, ...ourEntries() }),
     set: (v) => { original = v; },
   });
   if (!ok || !holder.SETTING_RENDERER_CONFIG?.[KEY]) { patchErrors.push("config registration not visible"); return; }
@@ -110,8 +113,7 @@ function onCreateList(args: any[], ret: any) {
   const section = { label: "HeartBlade", title: "HeartBlade", settings: [KEY] };
   const place = (arr: any[]) => {
     if (arr.some((s: any) => has(s, KEY))) return false;          // already there
-    const at = arr.findIndex((s: any) => has(s, en?.SUPPORT, "SUPPORT"));
-    arr.splice(at >= 0 ? at : arr.length, 0, section);
+    arr.splice(0, 0, section);                                    // very top of the settings list
     return true;
   };
   if (inserted === 0) {
