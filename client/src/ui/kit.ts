@@ -3,6 +3,7 @@
 import * as metro from "../metro";
 import * as native from "../native";
 import { BRAND, LOGO_PNG } from "../brand";
+import { error } from "../log";
 
 const lz = metro.lazy;
 export const RN = lz<any>(() => metro.findByProps("AppRegistry", "Alert"));
@@ -11,7 +12,7 @@ export const h = (type: any, props?: any, ...children: any[]) => RX().createElem
 
 // ---- palette ------------------------------------------------------------------------------------------------
 
-export interface Palette { dark: boolean; bg: string; card: string; text: string; muted: string; sep: string; input: string; accent: string; danger: string; onAccent: string; }
+export interface Palette { dark: boolean; bg: string; card: string; text: string; muted: string; sep: string; input: string; accent: string; danger: string; ok: string; onAccent: string; }
 
 const rawColors = lz<any>(() => metro.findLoaded((m: any) => m.unsafe_rawColors || (m.colors && m.meta)));
 const themeStore = lz<any>(() => metro.findLoaded(metro.byStoreName("ThemeStore")));
@@ -73,7 +74,7 @@ function computePalette(): Palette {
     dark, bg, text, muted, card,
     sep: `rgba(${sepBase},0.09)`,
     input: mix(bgRgb, dark ? [255, 255, 255] : [0, 0, 0], dark ? 0.03 : 0.06),
-    accent: BRAND.accent, danger: "#f23f43", onAccent: "#ffffff",
+    accent: BRAND.accent, danger: "#f23f43", ok: "#3ba55d", onAccent: "#ffffff",
   };
 }
 
@@ -92,12 +93,11 @@ export function discordIcon(...names: string[]): any {
   return found;
 }
 
-/** The HeartBlade logo as a tinted image. Also used as the settings-row icon (Discord passes size / color props). */
+/** The HeartBlade icon (full colour, not tinted). Also used as the settings-row icon (Discord passes size / color props). */
 export function LogoImage(props: any = {}) {
   const { Image } = RN();
   const size = typeof props.size === "number" ? props.size : props.width ?? 24;
-  const tint = typeof props.color === "string" ? props.color : props.tint ?? palette().text;
-  return h(Image, { source: { uri: LOGO_PNG }, style: { width: size, height: size, tintColor: tint }, resizeMode: "contain" });
+  return h(Image, { source: { uri: LOGO_PNG }, style: { width: size, height: size }, resizeMode: "contain" });
 }
 
 // ---- building blocks ----------------------------------------------------------------------------------------
@@ -114,18 +114,19 @@ export function Screen(p: { children: any[]; refreshControl?: any }) {
 
 export function Hero(p: { subtitle?: string; size?: number; quote?: string; badge?: string }) {
   const { View, Text } = RN(); const P = palette();
-  const size = p.size ?? 76;
-  return h(View, { style: { alignItems: "center", paddingTop: 8, paddingBottom: 22 } },
-    LogoImage({ size, color: P.accent }),
-    h(Text, { style: { color: P.text, fontSize: 28, fontWeight: "800", marginTop: 10, letterSpacing: 0.3 } }, BRAND.name),
-    p.subtitle ? h(Text, { style: { color: P.muted, fontSize: 14, marginTop: 4, textAlign: "center", paddingHorizontal: 24, lineHeight: 19 } }, p.subtitle) : null,
-    p.badge ? h(View, { style: { marginTop: 10, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: P.card } },
+  const size = p.size ?? 96;
+  return h(View, { style: { alignItems: "center", paddingTop: 6, paddingBottom: 22 } },
+    LogoImage({ size }),
+    h(Text, { style: { color: P.text, fontSize: 26, fontWeight: "800", marginTop: 8, letterSpacing: 0.4 } }, BRAND.name),
+    h(View, { style: { width: 28, height: 2, borderRadius: 1, backgroundColor: P.accent, marginTop: 10 } }),
+    p.subtitle ? h(Text, { style: { color: P.muted, fontSize: 14, marginTop: 10, textAlign: "center", paddingHorizontal: 24, lineHeight: 19 } }, p.subtitle) : null,
+    p.quote ? h(Text, { style: { color: P.muted, fontSize: 13, fontStyle: "italic", marginTop: 8, textAlign: "center", paddingHorizontal: 28 } }, `“${p.quote}”`) : null,
+    p.badge ? h(View, { style: { marginTop: 12, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: P.sep } },
       h(Text, { style: { color: P.muted, fontSize: 12, fontWeight: "600" } }, p.badge)) : null,
-    p.quote ? h(Text, { style: { color: P.muted, fontSize: 13, fontStyle: "italic", marginTop: 12, textAlign: "center", paddingHorizontal: 28 } }, `“${p.quote}”`) : null,
   );
 }
 
-export function Group(p: { title?: string; footer?: string; children: any[] }) {
+export function Group(p: { title?: string; footer?: string; headerRight?: any; children: any[] }) {
   const { View, Text, StyleSheet } = RN(); const P = palette(); const R = RX();
   const kids = p.children.filter(Boolean);
   const hair = StyleSheet?.hairlineWidth ?? 1;
@@ -134,15 +135,27 @@ export function Group(p: { title?: string; footer?: string; children: any[] }) {
     if (i > 0) items.push(h(View, { key: "d" + i, style: { height: hair, marginLeft: 16, backgroundColor: P.sep } }));
     items.push(h(R.Fragment, { key: "r" + i }, k));
   });
+  const header = p.title || p.headerRight
+    ? h(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, marginHorizontal: 6, minHeight: 28 } },
+      h(Text, { style: { color: P.accent, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 } }, p.title ?? ""),
+      p.headerRight ?? null)
+    : null;
   return h(View, { style: { marginBottom: 22 } },
-    p.title ? h(Text, { style: { color: P.muted, fontSize: 13, fontWeight: "700", marginBottom: 8, marginLeft: 6, textTransform: "uppercase", letterSpacing: 0.6 } }, p.title) : null,
-    h(View, { style: { backgroundColor: P.card, borderRadius: 14, overflow: "hidden" } }, ...items),
+    header,
+    h(View, { style: { backgroundColor: P.card, borderRadius: 12, borderWidth: hair, borderColor: P.sep, overflow: "hidden" } }, ...items),
     p.footer ? h(Text, { style: { color: P.muted, fontSize: 12.5, marginTop: 8, marginHorizontal: 8, lineHeight: 17 } }, p.footer) : null,
   );
 }
 
+/** Small "+" button for a group header. */
+export function PlusButton(p: { onPress: () => void }) {
+  const { Pressable, Text } = RN(); const P = palette();
+  return h(Pressable, { onPress: p.onPress, accessibilityLabel: "Add", hitSlop: 8, style: ({ pressed }: any) => ({ width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: P.accent, opacity: pressed ? 0.7 : 1 }) },
+    h(Text, { style: { color: P.onAccent, fontSize: 20, fontWeight: "600", lineHeight: 22, marginTop: -1 } }, "+"));
+}
+
 export interface RowProps {
-  title: string; subtitle?: string; value?: string; icon?: any; iconTint?: string; emoji?: string;
+  title: string; subtitle?: string; value?: string;
   onPress?: () => void; onLongPress?: () => void; chevron?: boolean; right?: any;
   accent?: boolean; destructive?: boolean; center?: boolean; lines?: number; mono?: boolean;
 }
@@ -150,17 +163,11 @@ export interface RowProps {
 export function Row(p: RowProps) {
   const { View, Text, Pressable } = RN(); const P = palette();
   const color = p.destructive ? P.danger : p.accent ? P.accent : P.text;
-  let icon: any = null;
-  if (p.icon || p.emoji) {
-    icon = h(View, { style: { width: 32, height: 32, borderRadius: 9, marginRight: 12, alignItems: "center", justifyContent: "center", backgroundColor: p.iconTint ?? P.accent } },
-      p.icon ? h(p.icon, { size: 18, color: "#ffffff" }) : h(Text, { style: { fontSize: 16 } }, p.emoji));
-  }
   return h(Pressable, {
     disabled: !p.onPress && !p.onLongPress,
     onPress: p.onPress, onLongPress: p.onLongPress,
     style: ({ pressed }: any) => ({ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, minHeight: 54, backgroundColor: pressed ? P.sep : "transparent" }),
   },
-    icon,
     h(View, { style: { flex: 1, paddingVertical: 12, alignItems: p.center ? "center" : "stretch" } },
       h(Text, { style: { color, fontSize: p.mono ? 12 : 16, fontWeight: p.center || p.accent ? "600" : "500", fontFamily: p.mono ? "Menlo" : undefined } }, p.title),
       p.subtitle ? h(Text, { numberOfLines: p.lines ?? 2, style: { color: P.muted, fontSize: 13, marginTop: 2, lineHeight: 18 } }, p.subtitle) : null),
@@ -176,6 +183,60 @@ export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) =>
     ...p,
     right: h(Switch, { value: p.on, onValueChange: p.onChange, trackColor: { true: P.accent, false: P.sep }, ios_backgroundColor: P.sep, thumbColor: "#ffffff" }),
   });
+}
+
+/**
+ * "+" dialog: paste a link, install it, and show success or failure right inside the dialog.
+ * Rendered only while open, so every opening starts clean.
+ */
+export function AddDialog(p: { title: string; hint: string; placeholder: string; install: (link: string) => Promise<string>; onChanged: () => void; onClose: () => void }) {
+  const { useState } = RX();
+  const { Modal, View, Text, Pressable, TextInput, KeyboardAvoidingView, StyleSheet } = RN(); const P = palette();
+  const [link, setLink] = useState("");
+  const [phase, setPhase] = useState("idle" as "idle" | "busy" | "ok" | "fail");
+  const [msg, setMsg] = useState("");
+  const hair = StyleSheet?.hairlineWidth ?? 1;
+
+  const run = () => {
+    const l = link.trim();
+    if (phase === "busy" || !l) return;
+    setPhase("busy"); setMsg("");
+    p.install(l).then((m) => { setMsg(m); setPhase("ok"); p.onChanged(); }, (e: any) => { error("install failed", e?.message ?? e); setMsg(String(e?.message ?? e)); setPhase("fail"); });
+  };
+  const paste = () => readClipboard().then((s) => { if (s) { setLink(s.trim()); if (phase === "fail") setPhase("idle"); } });
+
+  const btn = (label: string, onPress: () => void, kind: "primary" | "plain" = "plain", disabled = false) =>
+    h(Pressable, { onPress, disabled, style: ({ pressed }: any) => ({ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, marginLeft: 8, opacity: disabled ? 0.5 : pressed ? 0.7 : 1, backgroundColor: kind === "primary" ? P.accent : "transparent" }) },
+      h(Text, { style: { color: kind === "primary" ? P.onAccent : P.muted, fontSize: 15, fontWeight: "600" } }, label));
+
+  const status = phase === "ok"
+    ? h(View, { style: { marginTop: 14 } },
+      h(Text, { style: { color: P.ok, fontSize: 15, fontWeight: "700" } }, "Success"),
+      h(Text, { style: { color: P.muted, fontSize: 13, marginTop: 3, lineHeight: 18 } }, `${msg}. Restart Discord to apply.`))
+    : phase === "fail"
+      ? h(View, { style: { marginTop: 14 } },
+        h(Text, { style: { color: P.danger, fontSize: 15, fontWeight: "700" } }, "Failed"),
+        h(Text, { style: { color: P.muted, fontSize: 13, marginTop: 3, lineHeight: 18 } }, msg))
+      : phase === "busy" ? h(Text, { style: { color: P.muted, fontSize: 13, marginTop: 14 } }, "Installing…") : null;
+
+  const Wrap = KeyboardAvoidingView ?? View;
+  return h(Modal, { visible: true, transparent: true, animationType: "fade", onRequestClose: p.onClose },
+    h(Wrap, { behavior: "padding", style: { flex: 1, justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.6)" } },
+      h(View, { style: { backgroundColor: P.card, borderRadius: 14, borderWidth: hair, borderColor: P.sep, padding: 18 } },
+        h(Text, { style: { color: P.text, fontSize: 18, fontWeight: "700" } }, p.title),
+        h(Text, { style: { color: P.muted, fontSize: 13, marginTop: 6, lineHeight: 18 } }, p.hint),
+        h(TextInput, {
+          value: link, onChangeText: (v: string) => { setLink(v); if (phase === "fail" || phase === "ok") setPhase("idle"); }, placeholder: p.placeholder, placeholderTextColor: P.muted,
+          autoCapitalize: "none", autoCorrect: false, spellCheck: false, keyboardType: "url", returnKeyType: "go", onSubmitEditing: run, selectionColor: P.accent, editable: phase !== "busy",
+          style: { color: P.text, backgroundColor: P.input, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, marginTop: 14 },
+        }),
+        status,
+        h(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 16 } },
+          btn("Paste", paste, "plain", phase === "busy" || phase === "ok"),
+          h(View, { style: { flexDirection: "row" } },
+            btn(phase === "ok" ? "Done" : "Cancel", p.onClose),
+            phase === "ok" ? null : btn(phase === "fail" ? "Retry" : "Install", run, "primary", phase === "busy" || !link.trim()))),
+      )));
 }
 
 export function Banner(p: { text: string; action?: string; onAction?: () => void }) {
