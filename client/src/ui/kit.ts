@@ -4,6 +4,7 @@ import * as metro from "../metro";
 import * as native from "../native";
 import { BRAND, LOGO_PNG } from "../brand";
 import { error } from "../log";
+import { themeRestylesColors } from "../themes";
 
 const lz = metro.lazy;
 export const RN = lz<any>(() => metro.findByProps("AppRegistry", "Alert"));
@@ -59,22 +60,24 @@ export function palette(): Palette {
 }
 
 function computePalette(): Palette {
-  const name = themeName();
+  // Plain black by default. If an installed theme restyles the colours, follow Discord (the theme wins).
+  const themed = themeRestylesColors();
+  const name = themed ? themeName() : "dark";
   const dark = name !== "light";
   const fb = dark
-    ? { bg: name === "midnight" ? "#000000" : "#1a1a1e", text: "#f2f3f5", muted: "#a0a3ab" }
+    ? { bg: "#000000", text: "#f2f3f5", muted: "#a0a3ab" }
     : { bg: "#f2f3f5", text: "#1a1a1e", muted: "#686b73" };
-  const bg = token(["BACKGROUND_BASE_LOWEST", "BACKGROUND_TERTIARY", "BACKGROUND_PRIMARY"]) ?? fb.bg;
-  const text = token(["TEXT_STRONG", "TEXT_NORMAL"]) ?? fb.text;
-  const muted = token(["TEXT_MUTED", "TEXT_SECONDARY"]) ?? fb.muted;
+  const bg = (themed ? token(["BACKGROUND_BASE_LOWEST", "BACKGROUND_TERTIARY", "BACKGROUND_PRIMARY"]) : undefined) ?? fb.bg;
+  const text = (themed ? token(["TEXT_STRONG", "TEXT_NORMAL"]) : undefined) ?? fb.text;
+  const muted = (themed ? token(["TEXT_MUTED", "TEXT_SECONDARY"]) : undefined) ?? fb.muted;
   const bgRgb = parseColor(bg) ?? parseColor(fb.bg)!;
-  const card = mix(bgRgb, dark ? [255, 255, 255] : [0, 0, 0], dark ? 0.07 : 0.035);
+  const card = mix(bgRgb, dark ? [255, 255, 255] : [0, 0, 0], dark ? 0.08 : 0.035);
   const sepBase = dark ? "255,255,255" : "0,0,0";
   return {
     dark, bg, text, muted, card,
-    sep: `rgba(${sepBase},0.09)`,
-    input: mix(bgRgb, dark ? [255, 255, 255] : [0, 0, 0], dark ? 0.03 : 0.06),
-    accent: BRAND.accent, danger: "#f23f43", ok: "#3ba55d", onAccent: "#ffffff",
+    sep: `rgba(${sepBase},0.10)`,
+    input: mix(bgRgb, dark ? [255, 255, 255] : [0, 0, 0], dark ? 0.04 : 0.06),
+    accent: BRAND.accent, danger: "#f23f43", ok: "#3ba55d", onAccent: "#16130a",
   };
 }
 
@@ -112,18 +115,42 @@ export function Screen(p: { children: any[]; refreshControl?: any }) {
   }, ...p.children);
 }
 
-export function Hero(p: { subtitle?: string; size?: number; quote?: string; badge?: string }) {
+export function Hero(p: { size?: number } = {}) {
   const { View, Text } = RN(); const P = palette();
-  const size = p.size ?? 96;
-  return h(View, { style: { alignItems: "center", paddingTop: 6, paddingBottom: 22 } },
-    LogoImage({ size }),
-    h(Text, { style: { color: P.text, fontSize: 26, fontWeight: "800", marginTop: 8, letterSpacing: 0.4 } }, BRAND.name),
-    h(View, { style: { width: 28, height: 2, borderRadius: 1, backgroundColor: P.accent, marginTop: 10 } }),
-    p.subtitle ? h(Text, { style: { color: P.muted, fontSize: 14, marginTop: 10, textAlign: "center", paddingHorizontal: 24, lineHeight: 19 } }, p.subtitle) : null,
-    p.quote ? h(Text, { style: { color: P.muted, fontSize: 13, fontStyle: "italic", marginTop: 8, textAlign: "center", paddingHorizontal: 28 } }, `“${p.quote}”`) : null,
-    p.badge ? h(View, { style: { marginTop: 12, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: P.sep } },
-      h(Text, { style: { color: P.muted, fontSize: 12, fontWeight: "600" } }, p.badge)) : null,
-  );
+  return h(View, { style: { alignItems: "center", paddingTop: 6, paddingBottom: 18 } },
+    LogoImage({ size: p.size ?? 104 }),
+    h(Text, { style: { color: P.text, fontSize: 28, fontWeight: "800", marginTop: 8, letterSpacing: 0.4 } }, BRAND.name));
+}
+
+/** The Shinobu quote, with "I" and "Before, now, and always" in the accent colour. */
+export function Quote() {
+  const { Text } = RN(); const P = palette();
+  return h(Text, { style: { color: P.muted, fontSize: 14, fontStyle: "italic", textAlign: "center", lineHeight: 20, marginTop: 12, marginBottom: 26, paddingHorizontal: 20 } },
+    "“", ...BRAND.quoteParts.map(([s, hi]: [string, boolean], i: number) => (hi ? h(Text, { key: "q" + i, style: { color: P.accent, fontWeight: "600" } }, s) : s)), "”");
+}
+
+/** Plain text section (no box): small accent label + paragraphs. */
+export function Prose(p: { title?: string; paragraphs: string[] }) {
+  const { View, Text } = RN(); const P = palette();
+  return h(View, { style: { marginBottom: 26, marginHorizontal: 6 } },
+    p.title ? h(Text, { style: { color: P.accent, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 } }, p.title) : null,
+    ...p.paragraphs.map((t, i) => h(Text, { key: "p" + i, style: { color: P.text, fontSize: 14.5, lineHeight: 21, marginTop: i ? 6 : 0 } }, t)));
+}
+
+/** A few small centred lines of muted text (no box). */
+export function SmallLines(lines: string[]) {
+  const { View, Text } = RN(); const P = palette();
+  return h(View, { style: { alignItems: "center", marginTop: 2, marginBottom: 8 } },
+    ...lines.filter(Boolean).map((t, i) => h(Text, { key: "s" + i, style: { color: P.muted, fontSize: 12, lineHeight: 18, textAlign: "center" } }, t)));
+}
+
+/** Instagram glyph drawn with plain views (rounded square, lens, dot): crisp at any size, no image needed. */
+export function InstagramGlyph(p: { size?: number; color?: string }) {
+  const { View } = RN(); const P = palette();
+  const s = p.size ?? 22, c = p.color ?? P.text, w = Math.max(2, Math.round(s / 11));
+  return h(View, { style: { width: s, height: s, borderRadius: s * 0.3, borderWidth: w, borderColor: c, alignItems: "center", justifyContent: "center" } },
+    h(View, { style: { width: s * 0.46, height: s * 0.46, borderRadius: s * 0.23, borderWidth: w, borderColor: c } }),
+    h(View, { style: { position: "absolute", top: s * 0.14, right: s * 0.14, width: w + 1, height: w + 1, borderRadius: (w + 1) / 2, backgroundColor: c } }));
 }
 
 export function Group(p: { title?: string; footer?: string; headerRight?: any; children: any[] }) {
@@ -155,7 +182,7 @@ export function PlusButton(p: { onPress: () => void }) {
 }
 
 export interface RowProps {
-  title: string; subtitle?: string; value?: string;
+  title: string; subtitle?: string; value?: string; left?: any;
   onPress?: () => void; onLongPress?: () => void; chevron?: boolean; right?: any;
   accent?: boolean; destructive?: boolean; center?: boolean; lines?: number; mono?: boolean;
 }
@@ -168,6 +195,7 @@ export function Row(p: RowProps) {
     onPress: p.onPress, onLongPress: p.onLongPress,
     style: ({ pressed }: any) => ({ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, minHeight: 54, backgroundColor: pressed ? P.sep : "transparent" }),
   },
+    p.left ? h(View, { style: { marginRight: 12, width: 34, alignItems: "center", justifyContent: "center" } }, p.left) : null,
     h(View, { style: { flex: 1, paddingVertical: 12, alignItems: p.center ? "center" : "stretch" } },
       h(Text, { style: { color, fontSize: p.mono ? 12 : 16, fontWeight: p.center || p.accent ? "600" : "500", fontFamily: p.mono ? "Menlo" : undefined } }, p.title),
       p.subtitle ? h(Text, { numberOfLines: p.lines ?? 2, style: { color: P.muted, fontSize: 13, marginTop: 2, lineHeight: 18 } }, p.subtitle) : null),
