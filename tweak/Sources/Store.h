@@ -8,6 +8,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef void (^HBResult)(NSString *_Nullable message, NSError *_Nullable error);
 
 NSURL *HBDirectory(void);
@@ -41,5 +45,9 @@ extern BOOL HBSettingsEntryActive;
 
 BOOL HBClientEnabled(void);
 void HBSetClientEnabled(BOOL on);
+
+#ifdef __cplusplus
+}
+#endif
 
 NS_ASSUME_NONNULL_END
