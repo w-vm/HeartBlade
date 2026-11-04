@@ -134,7 +134,8 @@ export function installSettingsEntry(): SettingsReport {
 
     const best = hits.find((h) => !h.arr.includes("HEARTBLADE"));
     if (best) { best.arr.unshift("HEARTBLADE"); report.listInserted = true; done = true; }
-    if (report.listInserted) { native.setSettingsEntry(true); log("settings: HeartBlade row inserted"); }
+    // Never tell the native side the row is active: we cannot verify it is visible, and that would disable the shake gesture.
+    if (report.listInserted) log("settings: HeartBlade key added to a list (visibility unverified)");
     else if (attempts <= 1 || attempts % 15 === 0) warn("settings: could not find the settings list (will retry)");
   } catch (e: any) {
     report.error = String(e?.message ?? e);
