@@ -2,7 +2,7 @@ import { installMetroHook, findLoaded, byProps, onModuleInit } from "./metro";
 import { startEnabledPlugins } from "./plugins";
 import { startEnabledTheme } from "./themes";
 import * as native from "./native";
-import { installSettingsEntry, settingsDone } from "./settings";
+import { installSettingsEntry, settingsDone, settingsStats } from "./settings";
 import { runningPlugins } from "./plugins";
 import { moduleCount } from "./metro";
 import { log, error } from "./log";
@@ -21,18 +21,21 @@ function boot() {
   try { startEnabledPlugins(); } catch (e) { error("plugin boot", e); }
   let settings: any = null;
   try { settings = installSettingsEntry(); } catch (e) { error("settings boot", e); }
-  const publish = (st: any) => native.setInfo(JSON.stringify({ client: __HB_VERSION__, modules: moduleCount(), plugins: runningPlugins(), settings: st }));
+  let last: any = settings;
+  const publish = (st: any) => { last = st; native.setInfo(JSON.stringify({ client: __HB_VERSION__, modules: moduleCount(), plugins: runningPlugins(), settings: { ...st, live: settingsStats() } })); };
   publish(settings);
   log("ready");
-  // Discord fills its settings registry lazily, so keep trying for a while.
-  if (!settingsDone() && typeof setTimeout === "function") {
+  // Discord fills its settings modules lazily, so keep trying; afterwards keep the live counters fresh for a while
+  // (they change when the settings screen is opened).
+  if (typeof setTimeout === "function") {
     let tries = 0;
-    const retry = () => {
-      if (settingsDone() || ++tries > 120) return;
-      try { const st = installSettingsEntry(); publish(st); } catch (e) { error("settings retry", e); }
-      if (!settingsDone()) setTimeout(retry, tries < 30 ? 2000 : 5000);
+    const tick = () => {
+      tries++;
+      if (!settingsDone()) { try { publish(installSettingsEntry()); } catch (e) { error("settings retry", e); } }
+      else publish(last);
+      if (tries < (settingsDone() ? 400 : 120) + 0) setTimeout(tick, settingsDone() ? 3000 : tries < 30 ? 2000 : 5000);
     };
-    setTimeout(retry, 2000);
+    setTimeout(tick, 2000);
   }
 }
 
