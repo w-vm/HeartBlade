@@ -1,7 +1,7 @@
 #import "Panel.h"
 #import "Store.h"
 
-static UIColor *HBAccent(void) { return [UIColor colorWithRed:0.89 green:0.16 blue:0.27 alpha:1]; }
+static UIColor *HBAccent(void) { return [UIColor colorWithRed:0.91 green:0.79 blue:0.35 alpha:1]; }
 
 static UIViewController *TopViewController(void) {
     UIWindow *win = nil;
