@@ -1,3 +1,4 @@
+import { error } from "./log";
 // Minimal method patcher: before / instead / after hooks that can be undone.
 type Unpatch = () => void;
 type Before = (args: any[]) => any[] | void;
@@ -25,13 +26,13 @@ function getSlot(obj: any, key: string): Slot {
 
   const wrapped = function (this: any, ...args: any[]) {
     for (const b of s.before) {
-      try { const r = b.call(this, args); if (Array.isArray(r)) args = r; } catch (e) { console.error("[Heartblade] before-patch", key, e); }
+      try { const r = b.call(this, args); if (Array.isArray(r)) args = r; } catch (e) { error("before-patch " + key, e); }
     }
     let call = (...a: any[]) => s.orig.apply(this, a);
     for (const i of s.instead) { const next = call; call = (...a: any[]) => i.call(this, a, next); }
     let ret = call(...args);
     for (const a of s.after) {
-      try { const r = a.call(this, args, ret); if (r !== undefined) ret = r; } catch (e) { console.error("[Heartblade] after-patch", key, e); }
+      try { const r = a.call(this, args, ret); if (r !== undefined) ret = r; } catch (e) { error("after-patch " + key, e); }
     }
     return ret;
   };

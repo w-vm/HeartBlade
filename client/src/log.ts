@@ -4,7 +4,8 @@ const PREFIX = "[HeartBlade]";
 const fmt = (a: any[]) => a.map((x) => (x instanceof Error ? `${x.message}\n${x.stack ?? ""}` : typeof x === "string" ? x : safe(x))).join(" ");
 const safe = (x: any) => { try { return JSON.stringify(x); } catch { return String(x); } };
 const out = (level: "log" | "warn" | "error", a: any[]) => {
-  console[level](PREFIX, ...a);
+  // console is installed by React Native later than we are injected, so it may not exist yet.
+  try { const c = (globalThis as any).console; if (c && typeof c[level] === "function") c[level](PREFIX, ...a); } catch { /* ignore */ }
   nativeLog(`${level.toUpperCase()} ${fmt(a)}`); // shown in the panel's log viewer
 };
 
