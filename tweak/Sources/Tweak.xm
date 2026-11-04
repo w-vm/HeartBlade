@@ -118,6 +118,13 @@ static void EvaluateClient(jsi::Runtime &rt) {
         if (!HBClientEnabled()) { HBLog(@"client is disabled"); return; }
         [@"1" writeToURL:flag atomically:YES encoding:NSUTF8StringEncoding error:nil];
         InstallHostObject(runtime);
+        // The flag only means "we died while booting". Clear it after 8s, but ALSO when the app is backgrounded or
+        // terminated: closing Discord within 8s (or while the main queue timer is suspended) used to leave the flag
+        // behind, and the next launch then reported a crash that never happened and switched "Load client" off.
+        void (^clearFlag)(NSNotification *) = ^(NSNotification *n) { [[NSFileManager defaultManager] removeItemAtURL:flag error:nil]; };
+        NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+        [nc addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:nil usingBlock:clearFlag];
+        [nc addObserverForName:UIApplicationWillTerminateNotification object:nil queue:nil usingBlock:clearFlag];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             [[NSFileManager defaultManager] removeItemAtURL:flag error:nil];
         });
