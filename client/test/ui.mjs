@@ -14,7 +14,7 @@ writeFileSync(P("registry.json"), JSON.stringify([
 ]));
 mkdirSync(P("themes"), { recursive: true });
 writeFileSync(P("plugins/hello/manifest.json"), JSON.stringify({ name: "Hello", version: "1.0.0", author: "wvm" }));
-writeFileSync(P("plugins/hello/index.js"), "return {};");
+writeFileSync(P("plugins/hello/index.js"), "return { settings: function HelloSettings() { return hb.React.createElement('Text', null, 'Hello settings body'); } };");
 writeFileSync(P("themes/crimson.json"), JSON.stringify({ name: "Crimson", semanticColors: { BG: { dark: "#111" } } }));
 
 // ---- fake native host (starts WITHOUT the 0.2.0 functions to test the old-.deb path) ----
@@ -124,6 +124,7 @@ const RN = {
   Alert: { alert: (t, m, b) => alerts.push({ t, m, b }), prompt: (t, m, b, ...rest) => alerts.push({ t, m, b, prompt: true, rest }) },
   View: "View", Text: "Text", ScrollView: "ScrollView", Pressable: "Pressable", Image: "Image", TextInput: "TextInput", Modal: "Modal",
   Switch: (props) => { if (globalThis.__boom) throw new Error("boom"); return React.createElement("Switch", props); },
+  NativeModules: { BundleUpdaterManager: { reload: () => { state.reloaded = true; } } },
   StyleSheet: { hairlineWidth: 1 }, Linking: { openURL: (u) => opened.push(u) },
 };
 
@@ -188,7 +189,12 @@ assert.ok(secOrder.every((n, i) => n >= 0 && (i === 0 || n > secOrder[i - 1])), 
 assert.ok(!has("Info") && !has("License") && !has("Latest release"), "removed rows are gone");
 assert.equal(all(tree, (n) => n.type === "Text" && n.children.includes("Made by")).length, 1, "single Made by credit");
 assert.equal(all(tree, (n) => n.type === "Image" && n.props.source?.uri?.includes("cdn.discordapp.com/avatars/233320628235665408/abc")).length, 1, "discord avatar is shown");
-assert.equal(all(tree, (n) => n.type === "Text" && n.children.includes("Before, now, and always"))[0].props.style.color, "#E8C95A", "quote highlight uses the accent");
+for (const w of ["I do", "Before", "now", "always"]) assert.equal(all(tree, (n) => n.type === "Text" && n.children.includes(w))[0].props.style.color, "#E8C95A", `quote highlight "${w}" uses the accent`);
+for (const w of [" as I please. ", ", and "]) assert.ok(texts(tree).includes(w) && !all(tree, (n) => n.type === "Text" && n.props.style?.color === "#E8C95A" && n.children.includes(w)).length, `"${w.trim()}" stays plain`);
+for (const l of ["A Discord tweak. Nothing more, nothing less.", "Plugins and themes, installed from a link.", "Named after Shinobu Oshino. Short temper, sharp blade."]) assert.ok(texts(tree).includes(l), `About line: ${l}`);
+assert.ok(!has("No store"), "About has only the three requested lines");
+assert.equal(all(tree, (n) => n.type === "View")[0].props.style.backgroundColor, "#000000", "outer view is black too");
+assert.equal(navOpts.pop().cardStyle.backgroundColor, "#000000", "navigator card is painted black");
 assert.equal(all(tree, (n) => n.type === "ScrollView")[0].props.style.backgroundColor, "#000000", "plain black background by default");
 assert.ok(has("HeartBlade 0."), "client version line");
 const gif = all(tree, (n) => n.type === "Image" && n.props.source?.uri?.endsWith(".gif"))[0];
@@ -233,7 +239,18 @@ await press("Install");
 assert.ok(has("Failed"), "bad link reports a failure in the dialog");
 assert.ok(row("Retry"), "can retry");
 await press("Cancel");
-await press("Cool Plug"); const det = alerts.pop(); assert.equal(det.t, "Cool Plug"); assert.ok(det.b.some((b) => b.text === "Remove"));
+await press("Cool Plug"); const det = alerts.pop(); assert.equal(det.t, "Cool Plug"); assert.ok(det.b.some((b) => b.text === "Remove"), "plugin without settings: tap shows details");
+const sw = all(row("Hello").children, (n) => n.type === "Switch")[0];
+assert.equal(sw.props.style.alignSelf, "center", "switch is vertically centred");
+// a running plugin that exposes settings opens its own page on tap (Hello is started at boot with a settings component)
+await press("Hello");
+assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "pluginSettings", title: "Hello", id: "hello" }], "tap opens the plugin's settings page");
+assert.equal(alerts.length, 0, "no details alert for a plugin with settings");
+const holdHello = row("Hello"); holdHello.props.onLongPress(); await flush();
+const holdAlert = alerts.pop(); assert.equal(holdAlert.t, "Hello"); assert.ok(holdAlert.b.some((b) => b.text === "Remove"), "hold still offers details and remove");
+mount(Sub, { navigation: nav, route: { params: { page: "pluginSettings", title: "Hello", id: "hello" } } });
+assert.ok(has("Hello settings body") && has("Details and remove"), "plugin settings page renders the plugin's component");
+open("plugins", "Plugins");
 
 // ===== 4. themes page =====
 open("themes", "Themes");
@@ -250,6 +267,8 @@ assert.deepEqual(reg().filter((e) => e.type === "theme").map((e) => [e.id, e.ena
 // ===== 5. developer page =====
 open("developer", "Developer");
 assert.ok(has("Needs the latest HeartBlade.deb"), "old .deb: options degrade gracefully");
+await press("Restart Discord");                      // old .deb has no restart(): falls back to reloading through Discord's native module
+{ const a = alerts.pop(); a.b[1].onPress(); assert.equal(state.reloaded, true, "restart falls back to a reload"); assert.ok(!alerts.length, "no 'Restart manually' alert when the reload works"); }
 addNewNative();
 open("developer", "Developer");
 assert.ok(!has("Needs the latest HeartBlade.deb"));

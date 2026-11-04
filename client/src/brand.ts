@@ -4,7 +4,7 @@ export const BRAND = {
   tagline: "Plugins and themes for Discord, installed from a link.",
   quote: "I do as I please. Before, now, and always.",
   // The quote split into pieces; the highlighted ones are drawn in the accent colour.
-  quoteParts: [["I", true], [" do as ", false], ["I", true], [" please. ", false], ["Before, now, and always", true], [".", false]] as Array<[string, boolean]>,
+  quoteParts: [["I do", true], [" as I please. ", false], ["Before", true], [", ", false], ["now", true], [", and ", false], ["always", true], [".", false]] as Array<[string, boolean]>,
   author: "wvm",
   instagram: "wvm",
   instagramUrl: "https://instagram.com/wvm",

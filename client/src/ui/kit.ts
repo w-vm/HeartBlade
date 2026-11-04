@@ -106,13 +106,15 @@ export function LogoImage(props: any = {}) {
 // ---- building blocks ----------------------------------------------------------------------------------------
 
 export function Screen(p: { children: any[]; refreshControl?: any }) {
-  const { ScrollView } = RN(); const P = palette();
-  return h(ScrollView, {
-    style: { flex: 1, backgroundColor: P.bg },
-    contentContainerStyle: { padding: 16, paddingBottom: 56 },
-    contentInsetAdjustmentBehavior: "automatic",
-    keyboardShouldPersistTaps: "handled",
-  }, ...p.children);
+  const { View, ScrollView } = RN(); const P = palette();
+  // The outer View paints the whole area (corners and safe areas included), so Discord's own colour never peeks through.
+  return h(View, { style: { flex: 1, backgroundColor: P.bg } },
+    h(ScrollView, {
+      style: { flex: 1, backgroundColor: P.bg },
+      contentContainerStyle: { padding: 16, paddingBottom: 56, backgroundColor: P.bg },
+      contentInsetAdjustmentBehavior: "automatic",
+      keyboardShouldPersistTaps: "handled",
+    }, ...p.children));
 }
 
 export function Hero(p: { size?: number } = {}) {
@@ -190,26 +192,29 @@ export interface RowProps {
 export function Row(p: RowProps) {
   const { View, Text, Pressable } = RN(); const P = palette();
   const color = p.destructive ? P.danger : p.accent ? P.accent : P.text;
+  // The Pressable only handles the touch and the pressed colour; the layout lives in an inner View so the row's
+  // vertical centring never depends on how Pressable lays out its children.
   return h(Pressable, {
     disabled: !p.onPress && !p.onLongPress,
     onPress: p.onPress, onLongPress: p.onLongPress,
-    style: ({ pressed }: any) => ({ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, minHeight: 54, backgroundColor: pressed ? P.sep : "transparent" }),
+    style: ({ pressed }: any) => ({ backgroundColor: pressed ? P.sep : "transparent" }),
   },
-    p.left ? h(View, { style: { marginRight: 12, width: 34, alignItems: "center", justifyContent: "center" } }, p.left) : null,
-    h(View, { style: { flex: 1, paddingVertical: 12, alignItems: p.center ? "center" : "stretch" } },
-      h(Text, { style: { color, fontSize: p.mono ? 12 : 16, fontWeight: p.center || p.accent ? "600" : "500", fontFamily: p.mono ? "Menlo" : undefined } }, p.title),
-      p.subtitle ? h(Text, { numberOfLines: p.lines ?? 2, style: { color: P.muted, fontSize: 13, marginTop: 2, lineHeight: 18 } }, p.subtitle) : null),
-    p.value != null ? h(Text, { numberOfLines: 1, style: { color: P.muted, fontSize: 15, marginLeft: 10, maxWidth: "45%" } }, p.value) : null,
-    p.right ?? null,
-    p.chevron ? h(Text, { style: { color: P.muted, fontSize: 24, marginLeft: 8, marginTop: -2 } }, "›") : null,
-  );
+    h(View, { style: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, minHeight: 54 } },
+      p.left ? h(View, { style: { marginRight: 12, width: 34, alignItems: "center", justifyContent: "center" } }, p.left) : null,
+      h(View, { style: { flex: 1, paddingVertical: 12, alignItems: p.center ? "center" : "stretch" } },
+        h(Text, { style: { color, fontSize: p.mono ? 12 : 16, fontWeight: p.center || p.accent ? "600" : "500", fontFamily: p.mono ? "Menlo" : undefined } }, p.title),
+        p.subtitle ? h(Text, { numberOfLines: p.lines ?? 2, style: { color: P.muted, fontSize: 13, marginTop: 2, lineHeight: 18 } }, p.subtitle) : null),
+      p.value != null ? h(Text, { numberOfLines: 1, style: { color: P.muted, fontSize: 15, marginLeft: 10, maxWidth: "45%" } }, p.value) : null,
+      p.right ? h(View, { style: { marginLeft: 12, alignSelf: "center", alignItems: "center", justifyContent: "center" } }, p.right) : null,
+      p.chevron ? h(Text, { style: { color: P.muted, fontSize: 24, marginLeft: 8, marginTop: -2 } }, "›") : null,
+    ));
 }
 
 export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) => void }) {
   const { Switch } = RN(); const P = palette();
   return Row({
     ...p,
-    right: h(Switch, { value: p.on, onValueChange: p.onChange, trackColor: { true: P.accent, false: P.sep }, ios_backgroundColor: P.sep, thumbColor: "#ffffff" }),
+    right: h(Switch, { value: p.on, onValueChange: p.onChange, trackColor: { true: P.accent, false: P.sep }, ios_backgroundColor: P.sep, thumbColor: "#ffffff", style: { alignSelf: "center", margin: 0 } }),
   });
 }
 
@@ -317,5 +322,18 @@ export const readClipboard = (): Promise<string> => {
   try { const c = clipboard(); if (c?.getString) return Promise.resolve(c.getString()).then((s: any) => String(s ?? "")); } catch { /* ignore */ }
   return Promise.resolve("");
 };
+
+/**
+ * Fallback restart for a native side that has no restart(): reload the app through Discord's own native modules
+ * (the same call other mods use). Returns true when one of them accepted the call.
+ */
+export function reloadApp(): boolean {
+  const tryCall = (get: () => any): boolean => { try { const f = get(); if (typeof f === "function") { f(); return true; } } catch { /* next */ } return false; };
+  const proxy = () => (globalThis as any).nativeModuleProxy;
+  const mods = () => RN()?.NativeModules;
+  return tryCall(() => { const m = proxy()?.BundleUpdaterManager ?? mods()?.BundleUpdaterManager; return m?.reload ? () => m.reload() : undefined; })
+    || tryCall(() => { const m = proxy()?.DevSettings ?? mods()?.DevSettings; return m?.reload ? () => m.reload() : undefined; })
+    || tryCall(() => { const m = RN()?.DevSettings; return m?.reload ? () => m.reload() : undefined; });
+}
 
 export function openUrl(url: string) { try { RN()?.Linking?.openURL(url); } catch { /* ignore */ } }

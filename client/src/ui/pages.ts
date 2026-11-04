@@ -2,11 +2,11 @@ import * as native from "../native";
 import { BRAND } from "../brand";
 import { log, error } from "../log";
 import { moduleCount } from "../metro";
-import { runningPlugins } from "../plugins";
+import { runningPlugins, pluginSettings, hasPluginSettings } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, needsRestart, markChanged } from "../manager";
-import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl } from "./kit";
+import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
 
@@ -14,11 +14,12 @@ export const PAGE_ROUTE = "HEARTBLADE_PAGE";
 
 // ---- navigation ---------------------------------------------------------------------------------------------
 
-function go(props: any, page: string, title: string) {
+function go(props: any, page: string, title: string, extra?: Record<string, any>) {
   const nav = props?.navigation;
+  const params = { page, title, ...(extra ?? {}) };
   try {
-    if (typeof nav?.push === "function") return nav.push(PAGE_ROUTE, { page, title });
-    if (typeof nav?.navigate === "function") return nav.navigate(PAGE_ROUTE, { page, title });
+    if (typeof nav?.push === "function") return nav.push(PAGE_ROUTE, params);
+    if (typeof nav?.navigate === "function") return nav.navigate(PAGE_ROUTE, params);
   } catch (e) { error("navigate failed", e); }
   alert("Could not open the page", "Navigation is not available here. Use the legacy panel (shake your phone).");
 }
@@ -36,8 +37,31 @@ function useRefresh(props: any) {
 }
 
 const restartNow = () => confirm("Restart Discord?", "Discord will close. Open it again to apply your changes.", "Restart", () => {
-  if (!native.restartApp()) alert("Restart manually", "Close Discord from the app switcher and open it again.");
+  if (native.restartApp()) return;     // the tweak closes the app
+  if (reloadApp()) return;             // older .deb without restart(): reload Discord through its own native module
+  alert("Restart manually", "Close Discord from the app switcher and open it again.");
 });
+
+/** Paint the navigator's chrome (header + card behind the page) in the page colour so no Discord-coloured edges show. */
+function useChrome(props: any) {
+  const { useEffect } = RX();
+  useEffect(() => {
+    try {
+      const bg = palette().bg;
+      props?.navigation?.setOptions?.({
+        headerStyle: { backgroundColor: bg, shadowColor: "transparent", elevation: 0 },
+        cardStyle: { backgroundColor: bg },
+        contentStyle: { backgroundColor: bg },
+      });
+    } catch { /* ignore */ }
+  }, []);
+}
+
+function showDetails(kind: Kind, id: string, link: string, onRemoved: () => void) {
+  const m = readMeta(kind, id);
+  const lines = [m.version && `Version ${m.version}`, m.author && `By ${m.author}`, m.description, link].filter(Boolean).join("\n\n");
+  alert(m.name, lines, [{ text: "Close", style: "cancel" }, { text: "Remove", style: "destructive", onPress: () => confirm(`Remove ${m.name}?`, "Its files and saved data will be deleted.", "Remove", () => { remove(kind, id); onRemoved(); }, true) }]);
+}
 
 // ---- root ---------------------------------------------------------------------------------------------------
 
@@ -65,6 +89,7 @@ function RootPage(props: any) {
   const { useState } = RX();
   const { View, Image } = RN(); const P = palette();
   useRefresh(props);
+  useChrome(props);
   const [gifFailed, setGifFailed] = useState(false);
   const plugins = listEntries("plugin"), themes = listEntries("theme");
   const on = plugins.filter((e) => e.enabled).length;
@@ -87,7 +112,7 @@ function RootPage(props: any) {
     title: "About",
     paragraphs: [
       "A Discord tweak. Nothing more, nothing less.",
-      "Plugins and themes, installed from a link. No store, no fuss: paste a URL and it installs.",
+      "Plugins and themes, installed from a link.",
       "Named after Shinobu Oshino. Short temper, sharp blade.",
     ],
   }));
@@ -137,16 +162,14 @@ function ManagerPage(props: any) {
   const [adding, setAdding] = useState(false);
   const entries = listEntries(kind);
 
-  const details = (id: string, link: string) => {
-    const m = readMeta(kind, id);
-    const lines = [m.version && `Version ${m.version}`, m.author && `By ${m.author}`, m.description, link].filter(Boolean).join("\n\n");
-    alert(m.name, lines, [{ text: "Close", style: "cancel" }, { text: "Remove", style: "destructive", onPress: () => confirm(`Remove ${m.name}?`, "Its files and saved data will be deleted.", "Remove", () => { remove(kind, id); bump(); }, true) }]);
-  };
+  const details = (id: string, link: string) => showDetails(kind, id, link, bump);
 
   const rows = entries.map((e) => {
     const m = readMeta(kind, e.id);
     const sub = [m.version && `v${m.version}`, m.author].filter(Boolean).join(" · ") || e.url;
-    return SwitchRow({ title: m.name, subtitle: sub, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: () => details(e.id, e.url), onLongPress: () => details(e.id, e.url) });
+    // A plugin that has settings opens them on tap; everything else (and long press) shows details + remove.
+    const open = () => (isPlugin && hasPluginSettings(e.id) ? go(props, "pluginSettings", m.name, { id: e.id }) : details(e.id, e.url));
+    return SwitchRow({ title: m.name, subtitle: sub, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open, onLongPress: () => details(e.id, e.url) });
   });
 
   const kids: any[] = [];
@@ -154,7 +177,7 @@ function ManagerPage(props: any) {
   kids.push(Group({
     title: `${isPlugin ? "Plugins" : "Themes"}${entries.length ? ` · ${entries.length}` : ""}`,
     headerRight: PlusButton({ onPress: () => setAdding(true) }),
-    footer: entries.length ? "Tap an item for details or to remove it." : undefined,
+    footer: entries.length ? (isPlugin ? "Tap a plugin to open its settings, or for details if it has none. Hold for details and to remove it." : "Tap an item for details or to remove it.") : undefined,
     children: rows.length ? rows : [Row({ title: isPlugin ? "No plugins yet" : "No themes yet", subtitle: "Tap + to add one from a link.", center: true })],
   }));
   // The dialog sits next to the screen (not inside the list), so a restart banner appearing above does not remount it.
@@ -172,6 +195,26 @@ function ManagerPage(props: any) {
         onClose: () => { setAdding(false); bump(); },
       })
       : null);
+}
+
+// ---- plugin settings ----------------------------------------------------------------------------------------
+
+function PluginSettingsPage(props: any) {
+  const { View } = RN();
+  const bump = useRefresh(props);
+  const id: string = props?.route?.params?.id ?? "";
+  const Settings = pluginSettings(id);
+  const link = listEntries("plugin").find((e) => e.id === id)?.url ?? "";
+
+  const kids: any[] = [];
+  if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
+  kids.push(Settings
+    ? h(View, { style: { marginBottom: 22 } }, h(Settings, { key: id }))
+    : Group({ children: [Row({ title: "No settings", subtitle: "This plugin does not have settings, or it is not running right now.", center: true })] }));
+  kids.push(Group({
+    children: [Row({ title: "Details and remove", chevron: true, onPress: () => showDetails("plugin", id, link, () => { bump(); try { props?.navigation?.goBack?.(); } catch { /* ignore */ } }) })],
+  }));
+  return Screen({ children: kids });
 }
 
 // ---- developer ----------------------------------------------------------------------------------------------
@@ -335,6 +378,7 @@ const PAGES: Record<string, (p: any) => any> = {
   root: (p) => h(RootPage, p),
   plugins: (p) => h(ManagerPage, { ...p, kind: "plugin" }),
   themes: (p) => h(ManagerPage, { ...p, kind: "theme" }),
+  pluginSettings: (p) => h(PluginSettingsPage, p),
   developer: (p) => h(DeveloperPage, p),
   logs: (p) => h(LogsPage, p),
   console: (p) => h(ConsolePage, p),
@@ -381,7 +425,8 @@ export function PageScreen(props: any) {
   const { useEffect } = RX();
   const params = props?.route?.params ?? {};
   const page: string = PAGES[params.page] ? params.page : "root";
-  useEffect(() => { try { props?.navigation?.setOptions?.({ title: params.title ?? BRAND.name }); } catch { /* ignore */ } }, [page]);
+  useChrome(props);
+  useEffect(() => { try { props?.navigation?.setOptions?.({ title: params.title ?? BRAND.name }); } catch { /* ignore */ } }, [page, params.title]);
   return h(boundary(), null, PAGES[page](props));
 }
 

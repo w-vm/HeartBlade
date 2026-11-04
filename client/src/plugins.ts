@@ -9,7 +9,7 @@ export interface RegistryEntry {
   enabled: boolean;
 }
 interface Manifest { id?: string; name?: string; version?: string; author?: string; description?: string; }
-interface Running { id: string; stop(): void; }
+interface Running { id: string; stop(): void; settings?: any; }
 
 const running = new Map<string, Running>();
 
@@ -33,6 +33,8 @@ export function startPlugin(id: string) {
     exported.onLoad?.();
     running.set(id, {
       id,
+      // A plugin may return `settings`: a React component that HeartBlade shows on the plugin's own page.
+      settings: typeof exported.settings === "function" || (exported.settings && typeof exported.settings === "object") ? exported.settings : undefined,
       stop() {
         try { exported.onUnload?.(); } catch (e) { error(`plugin ${id}: onUnload`, e); }
         patcher.unpatchAll();
@@ -55,3 +57,6 @@ export function startEnabledPlugins() {
 }
 
 export const runningPlugins = () => [...running.keys()];
+/** The settings component a running plugin exposes (undefined when it has none or is not running). */
+export const pluginSettings = (id: string): any => running.get(id)?.settings;
+export const hasPluginSettings = (id: string) => !!pluginSettings(id);
