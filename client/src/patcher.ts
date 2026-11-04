@@ -38,11 +38,14 @@ function getSlot(obj: any, key: string): Slot {
   };
   Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(orig));
   (wrapped as any).__hbOriginal = orig;
-  try {
-    obj[key] = wrapped;
-  } catch {
-    Object.defineProperty(obj, key, { value: wrapped, configurable: true, writable: true });
-  }
+  // Like Rain's patcher (sublimation): defineProperty first. A plain `obj[key] = fn` is silently ignored in sloppy
+  // mode when Metro/Babel exposed the export as a getter-only accessor, which made the patch look installed but never run.
+  let enumerable = true;
+  try { enumerable = Object.getOwnPropertyDescriptor(obj, key)?.enumerable ?? true; } catch { /* ignore */ }
+  let ok = false;
+  try { ok = Reflect.defineProperty(obj, key, { value: wrapped, configurable: true, writable: true, enumerable }); } catch { /* ignore */ }
+  if (!ok) { try { obj[key] = wrapped; } catch { /* ignore */ } }
+  if (obj[key] !== wrapped) throw new TypeError(`patcher: cannot patch ${key} (property is not configurable)`);
   perObj.set(key, s);
   return s;
 }
@@ -53,7 +56,7 @@ function add<T>(kind: "before" | "instead" | "after", obj: any, key: string, fn:
   return () => {
     (slot[kind] as Set<T>).delete(fn);
     if (!slot.before.size && !slot.instead.size && !slot.after.size) {
-      try { obj[key] = slot.orig; } catch { /* frozen */ }
+      try { if (!Reflect.defineProperty(obj, key, { value: slot.orig, configurable: true, writable: true, enumerable: true })) obj[key] = slot.orig; } catch { /* frozen */ }
       slots.get(obj)?.delete(key);
     }
   };
