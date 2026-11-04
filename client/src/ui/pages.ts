@@ -36,11 +36,12 @@ function useRefresh(props: any) {
   return bump;
 }
 
-const restartNow = () => confirm("Restart Discord?", "Discord will close. Open it again to apply your changes.", "Restart", () => {
+const doRestart = () => {
   if (native.restartApp()) return;     // the tweak closes the app
   if (reloadApp()) return;             // older .deb without restart(): reload Discord through its own native module
   alert("Restart manually", "Close Discord from the app switcher and open it again.");
-});
+};
+const restartNow = () => confirm("Restart Discord?", "Discord will close. Open it again to apply your changes.", "Restart", doRestart);
 
 /** Paint the navigator's chrome (header + card behind the page) in the page colour so no Discord-coloured edges show. */
 function useChrome(props: any) {
@@ -221,26 +222,28 @@ function PluginSettingsPage(props: any) {
 
 function DeveloperPage(props: any) {
   const bump = useRefresh(props);
-  const prefs = native.getPrefs();
   const safe = !!readPrefs().safeMode;
-  const stats = diag().stats();
-  const needNew = (title: string) => Row({ title, subtitle: "Needs the latest HeartBlade.deb", value: "—" });
 
   const kids: any[] = [];
   if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
 
   kids.push(Group({
-    title: "Client",
-    footer: "These switches apply the next time Discord starts.",
+    title: "Safety",
+    footer: "Applies the next time Discord starts. If Discord ever fails to start, shake the phone to open the recovery panel.",
     children: [
-      prefs
-        ? SwitchRow({ title: "Load client", subtitle: "Off starts Discord without HeartBlade", on: !!prefs.client, onChange: (v: boolean) => { native.setPref("client", v ? "1" : "0"); markChanged(); bump(); } })
-        : needNew("Load client"),
-      SwitchRow({ title: "Safe mode", subtitle: "Skip all plugins and the active theme", on: safe, onChange: (v: boolean) => { setPref("safeMode", v); markChanged(); bump(); } }),
-      Row({ title: "Update client now", accent: true, onPress: () => updateClient().then(() => alert("Client updated", "Restart Discord to use it."), (e: any) => alert("Update failed", String(e?.message ?? e))) }),
-      prefs
-        ? Row({ title: "Developer bundle URL", subtitle: "Load heartblade.js from your own server", value: prefs.devURL ? "on" : "off", chevron: true, onPress: () => prompt("Developer bundle URL", "Load heartblade.js from this URL on every launch, e.g. http://192.168.1.5:3000/heartblade.js. Leave empty to use the release build.", prefs.devURL, (t) => { native.setPref("devURL", t.trim()); bump(); }) })
-        : needNew("Developer bundle URL"),
+      SwitchRow({ title: "Safe mode", subtitle: "Start Discord without any plugins or the active theme. Turn it on if something breaks.", on: safe, onChange: (v: boolean) => { setPref("safeMode", v); markChanged(); bump(); } }),
+    ],
+  }));
+
+  kids.push(Group({
+    title: "Client",
+    children: [
+      Row({
+        title: "Update client", accent: true, subtitle: `Installed: ${__HB_VERSION__}. Downloads the latest version.`,
+        onPress: () => updateClient().then(
+          () => alert("Client updated", "Restart Discord to use the new version.", [{ text: "Later", style: "cancel" }, { text: "Restart", onPress: doRestart }]),
+          (e: any) => alert("Update failed", String(e?.message ?? e))),
+      }),
     ],
   }));
 
@@ -256,19 +259,8 @@ function DeveloperPage(props: any) {
   kids.push(Group({
     title: "Runtime",
     children: [
-      Row({ title: "Modules registered", value: String(moduleCount()) }),
       Row({ title: "Plugins running", value: String(runningPlugins().length) }),
-      Row({ title: "Settings hook", subtitle: `createList ×${stats.createListTargets ?? 0} · calls ${stats.createListCalls ?? 0} · overview ${stats.overviewSeen ? "seen" : "not seen"}`, value: stats.sectionsInserted ? "ok" : "waiting" }),
-      Row({ title: "Reset crash guard", subtitle: "Re-enable the settings entry after an unclean launch", onPress: () => { diag().resetGuard(); alert("Crash guard reset", "The settings entry will load normally next launch."); } }),
-    ],
-  }));
-
-  kids.push(Group({
-    title: "Fallback",
-    footer: "The legacy native panel is a backup in case the Discord settings entry ever breaks.",
-    children: [
-      prefs ? SwitchRow({ title: "Shake to open legacy panel", on: !!prefs.shake, onChange: (v: boolean) => { native.setPref("shake", v ? "1" : "0"); bump(); } }) : needNew("Shake to open legacy panel"),
-      Row({ title: "Open legacy panel", onPress: () => native.openPanel() }),
+      Row({ title: "Modules registered", value: String(moduleCount()) }),
     ],
   }));
 

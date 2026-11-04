@@ -1,6 +1,7 @@
 import * as native from "./native";
 import { readRegistry, RegistryEntry } from "./plugins";
 import { log } from "./log";
+import { BRAND } from "./brand";
 
 // JS-side plugin / theme management (the same on-disk layout the native Store.m uses):
 //   registry.json, plugins/<id>/{manifest.json,index.js}, themes/<id>.json
@@ -151,8 +152,8 @@ export function installTheme(input: string): Promise<string> {
 /** Download the client bundle (dev URL if set, otherwise the release URL) for the next launch. */
 export function updateClient(): Promise<boolean> {
   const p = native.getPrefs();
-  const url = p ? (parseUrl(p.devURL) ?? p.bundleURL) : "";
-  if (!url) return Promise.reject(new Error("Update needs the new HeartBlade.deb (native side too old)"));
+  // An old .deb has no prefs API: use the release URL, which is the same one the native side downloads from.
+  const url = (p ? (parseUrl(p.devURL) ?? parseUrl(p.bundleURL)) : null) ?? BRAND.bundleUrl;
   return getText(url).then((t) => {
     if (t.length < 200) throw new Error("Downloaded file is too small to be the client");
     native.writeFile("bundle.js", t);

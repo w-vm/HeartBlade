@@ -121,6 +121,7 @@ function onCreateList(args: any[], ret: any) {
     later(4000, () => { if (readGuard()?.state === "rendering") setGuard("ok", 0); });
   }
   if (place(sections)) inserted++;
+  if (inserted > 0) native.setSettingsEntry(true);                // the row is working: the shake panel is only a recovery tool
   // If createList already copied the sections into its return value, patch that copy too.
   const rs = ret?.sections;
   if (Array.isArray(rs) && rs !== sections) place(rs);

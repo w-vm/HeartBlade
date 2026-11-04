@@ -13,6 +13,7 @@ export const BRAND = {
   license: "MIT",
   repo: "https://github.com/w-vm/HeartBlade",
   releases: "https://github.com/w-vm/HeartBlade/releases/latest",
+  bundleUrl: "https://github.com/w-vm/heartblade/releases/download/latest/heartblade.js",
   accent: "#E8C95A",   // Shinobu gold
   // Animated banner at the top of the HeartBlade page (same image as the README). Remove the value to hide it.
   aboutGif: "https://heartunderblade.neocities.org/old_site/images/shinobu1.gif",

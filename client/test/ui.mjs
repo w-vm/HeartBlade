@@ -27,6 +27,7 @@ const native = globalThis.__HB_NATIVE__ = {
   listDir: (p) => (existsSync(P(p)) ? readdirSync(P(p)) : []),
   removeFile: () => true,
   openPanel: () => { state.panel = true; },
+  setSettingsEntry: (on) => { state.entry = on; },
 };
 const logs = ["10:00:00 LOG runtime test", "10:00:01 WARN careful", "10:00:02 ERROR broken"];
 const addNewNative = () => Object.assign(native, {
@@ -45,6 +46,7 @@ const web = {
   "https://x.test/t.json": JSON.stringify({ name: "Neon Night", semanticColors: { BG: { dark: "#001" } } }),
   "https://x.test/bad.json": JSON.stringify({ hello: 1 }),
   "https://x.test/heartblade.js": "/* release client */".padEnd(400, " "),
+  "https://github.com/w-vm/heartblade/releases/download/latest/heartblade.js": "/* default release client */".padEnd(400, " "),
   "http://192.168.1.5:3000/heartblade.js": "/* dev client */".padEnd(400, " "),
 };
 globalThis.fetch = async (url) => (url in web ? { ok: true, status: 200, text: async () => web[url] } : { ok: false, status: 404, text: async () => "" });
@@ -160,6 +162,7 @@ __r(14); __r(15); __r(16);
 // ===== 1. settings entry =====
 const out = settings.createList({ sections: [{ label: "Account Settings", settings: ["ACCOUNT"] }, { label: "Support", settings: ["SUPPORT"] }] });
 assert.equal(out.sections[0].settings[0], "HEARTBLADE", "HeartBlade section is first");
+assert.equal(state.entry, true, "native side is told the settings row works (shake panel steps aside)");
 assert.equal(out.sections.length, 3);
 const conf = settings.SETTING_RENDERER_CONFIG;
 assert.equal(conf.HEARTBLADE.type, "route", "row is a Discord route");
@@ -266,27 +269,25 @@ assert.deepEqual(reg().filter((e) => e.type === "theme").map((e) => [e.id, e.ena
 
 // ===== 5. developer page =====
 open("developer", "Developer");
-assert.ok(has("Needs the latest HeartBlade.deb"), "old .deb: options degrade gracefully");
+for (const gone of ["Load client", "Developer bundle URL", "Shake to open", "Reset crash guard", "Open legacy panel", "Settings hook", "Needs the latest HeartBlade.deb"]) assert.ok(!has(gone), `developer page no longer shows "${gone}"`);
+assert.ok(has("Safe mode") && has("Update client") && !has("Update client now"), "developer page keeps the useful rows");
+await press("Update client");                         // old .deb (no prefs API): falls back to the release URL
+assert.ok(readFileSync(P("bundle.js"), "utf8").includes("default release client"), "update works without the new .deb");
+{ const a = alerts.pop(); assert.equal(a.t, "Client updated"); assert.deepEqual(a.b.map((x) => x.text), ["Later", "Restart"]); }
+await toggle("Safe mode", true); assert.equal(JSON.parse(readFileSync(P("prefs.json"), "utf8")).safeMode, true);
+await toggle("Safe mode", false);
 await press("Restart Discord");                      // old .deb has no restart(): falls back to reloading through Discord's native module
 { const a = alerts.pop(); a.b[1].onPress(); assert.equal(state.reloaded, true, "restart falls back to a reload"); assert.ok(!alerts.length, "no 'Restart manually' alert when the reload works"); }
 addNewNative();
 open("developer", "Developer");
-assert.ok(!has("Needs the latest HeartBlade.deb"));
-await toggle("Load client", false); assert.equal(state.client, false);
-await toggle("Safe mode", true); assert.equal(JSON.parse(readFileSync(P("prefs.json"), "utf8")).safeMode, true);
-await toggle("Shake to open legacy panel", false); assert.equal(state.shake, false);
-await press("Developer bundle URL");
-const pr = alerts.pop(); assert.ok(pr.prompt); pr.b[1].onPress("http://192.168.1.5:3000/heartblade.js"); await flush();
-assert.equal(state.devURL, "http://192.168.1.5:3000/heartblade.js");
-await press("Update client now");
-assert.ok(readFileSync(P("bundle.js"), "utf8").includes("dev client"), "client bundle downloaded from the dev URL when set");
-await toggle("Shake to open legacy panel", true);
-pr.b[1].onPress(""); await flush();                                  // empty dev URL = back to the release build
-await press("Update client now");
+state.devURL = "http://192.168.1.5:3000/heartblade.js";
+await press("Update client");
+assert.ok(readFileSync(P("bundle.js"), "utf8").includes("dev client"), "dev URL (set from the recovery panel) is still honoured");
+state.devURL = "";
+await press("Update client");
 assert.ok(readFileSync(P("bundle.js"), "utf8").includes("release client"), "release URL used when dev URL is empty");
-assert.equal(alerts.pop().t, "Client updated");
+alerts.length = 0;
 await press("Copy debug report"); assert.equal(state.copied, "REPORT");
-await press("Reset crash guard"); assert.equal(alerts.pop().t, "Crash guard reset");
 await press("Restart Discord");
 const rs = alerts.pop(); rs.b[1].onPress(); assert.equal(state.restarted, true, "restart goes through confirmation");
 await press("Logs"); assert.equal(navCalls.pop()[1].page, "logs");
