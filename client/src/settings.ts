@@ -20,7 +20,7 @@ import { before } from "./patcher";
 export interface SettingsReport {
   builders: boolean; enumFound: boolean; configFound: boolean; configKeys: number; iconFound: boolean;
   configRegistered: boolean; patched: boolean; sectionsInserted: number; rowRendered: boolean;
-  attempts: number; error?: string; hint?: any;
+  attempts: number; frozen?: boolean; error?: string; hint?: any;
 }
 
 const KEY = "HEARTBLADE";
@@ -49,7 +49,8 @@ export function installSettingsEntry(): SettingsReport {
     report.enumFound = !!en && en.ACCOUNT !== undefined;
 
     // The real config is a plain object with many entries (a different module also exports a same-named i18n message).
-    const cfg: any = metro.findAllLoaded((e) => { try { return isPlain(e.SETTING_RENDERER_CONFIG) && keyCount(e.SETTING_RENDERER_CONFIG) >= 50; } catch { return false; } })[0]?.SETTING_RENDERER_CONFIG;
+    const holder: any = metro.findAllLoaded((e) => { try { return isPlain(e.SETTING_RENDERER_CONFIG) && keyCount(e.SETTING_RENDERER_CONFIG) >= 50; } catch { return false; } })[0];
+    const cfg: any = holder?.SETTING_RENDERER_CONFIG;
     report.configFound = !!cfg;
     report.configKeys = cfg ? keyCount(cfg) : 0;
 
@@ -69,12 +70,23 @@ export function installSettingsEntry(): SettingsReport {
     }
 
     if (!registered) {
-      cfg[KEY] = builders.createPressable({
+      const entry = builders.createPressable({
         useTitle: () => { rendered = true; return "HeartBlade"; },
-        ...(icon ? { IconComponent: icon } : {}),
+        // Some renderers always mount IconComponent, so never leave it undefined.
+        IconComponent: icon ?? (() => null),
         onPress: () => native.openPanel(),
         withArrow: true,
       });
+      report.frozen = Object.isFrozen(cfg) || !Object.isExtensible(cfg);
+      if (!report.frozen) {
+        cfg[KEY] = entry;
+      } else {
+        // The config object is sealed. Discord reads exports.SETTING_RENDERER_CONFIG at call time, so swap in a copy.
+        const copy = { ...cfg, [KEY]: entry };
+        try { holder.SETTING_RENDERER_CONFIG = copy; }
+        catch { Object.defineProperty(holder, "SETTING_RENDERER_CONFIG", { value: copy, configurable: true, writable: true, enumerable: true }); }
+        if (holder.SETTING_RENDERER_CONFIG !== copy) throw new Error("could not replace SETTING_RENDERER_CONFIG");
+      }
       registered = true;
     }
 
@@ -101,6 +113,7 @@ export function installSettingsEntry(): SettingsReport {
     report.configRegistered = registered; report.patched = patched;
   } catch (e: any) {
     report.error = String(e?.message ?? e);
+    done = true; // do not retry in a loop; the report says what failed
     warn("settings: failed", report.error);
   }
   report.sectionsInserted = inserted; report.rowRendered = rendered;
