@@ -150,6 +150,11 @@ __d((g, r, i, a, m) => { m.exports = { createList(o) { return { sections: o.sect
 __d((g, r, i, a, m) => { m.exports = RN; }, 12, []);
 __d((g, r, i, a, m) => { m.exports = React; }, 13, []);
 __r(10); const settings = __r(11); __r(12); __r(13);
+const users = {};
+__d((g, r, i, a, m) => { m.exports = { getName: () => "UserStore", getUser: (id) => users[id] }; }, 14, []);
+__d((g, r, i, a, m) => { m.exports = { fetchProfile: async (id) => { users[id] = { id, username: "wvmuser", avatar: "abc" }; } }; }, 15, []);
+__d((g, r, i, a, m) => { m.exports = { showUserProfile: (o) => { globalThis.__profile = o; } }; }, 16, []);
+__r(14); __r(15); __r(16);
 
 // ===== 1. settings entry =====
 const out = settings.createList({ sections: [{ label: "Account Settings", settings: ["ACCOUNT"] }, { label: "Support", settings: ["SUPPORT"] }] });
@@ -176,8 +181,16 @@ const nav = { push: (r, p) => navCalls.push([r, p]), setOptions: (o) => navOpts.
 const Root = conf.HEARTBLADE.screen.getComponent();
 const Sub = conf.HEARTBLADE_PAGE.screen.getComponent();
 mount(Root, { navigation: nav, route: {} });
-for (const t of ["HeartBlade", "Plugins", "Themes", "Developer", "About", "Made by", "Instagram", "@wvm", "233320628235665408", "Info", "Client", "Native tweak"]) assert.ok(has(t), `root shows ${t}`);
+await flush();
+for (const t of ["HeartBlade", "About", "Nothing more, nothing less", "Plugins", "Themes", "Made by", "wvmuser", "Source code", "Developer", "Discord"]) assert.ok(has(t) || t === "Discord", `root shows ${t}`);
+const secOrder = ["HeartBlade", "About", "Plugins", "Made by", "Source code", "Developer"].map((s) => texts(tree).findIndex((x) => x === s || x === s.toUpperCase()));
+assert.ok(secOrder.every((n, i) => n >= 0 && (i === 0 || n > secOrder[i - 1])), "sections are in the requested order: " + secOrder);
+assert.ok(!has("Info") && !has("License") && !has("Latest release"), "removed rows are gone");
 assert.equal(all(tree, (n) => n.type === "Text" && n.children.includes("Made by")).length, 1, "single Made by credit");
+assert.equal(all(tree, (n) => n.type === "Image" && n.props.source?.uri?.includes("cdn.discordapp.com/avatars/233320628235665408/abc")).length, 1, "discord avatar is shown");
+assert.equal(all(tree, (n) => n.type === "Text" && n.children.includes("Before, now, and always"))[0].props.style.color, "#E8C95A", "quote highlight uses the accent");
+assert.equal(all(tree, (n) => n.type === "ScrollView")[0].props.style.backgroundColor, "#000000", "plain black background by default");
+assert.ok(has("HeartBlade 0."), "client version line");
 const gif = all(tree, (n) => n.type === "Image" && n.props.source?.uri?.endsWith(".gif"))[0];
 assert.ok(gif, "banner gif is on the main page");
 gif.props.onError(); await flush();
@@ -189,8 +202,11 @@ assert.ok(!has("Restart Discord to apply"), "no restart banner yet");
 await press("Plugins");
 assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "plugins", title: "Plugins" }], "Plugins pushes onto Discord's navigator");
 await press("Developer"); assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "developer", title: "Developer" }]);
-await press("Instagram"); await press("Discord");
-assert.deepEqual(opened.splice(0), ["https://instagram.com/wvm", "https://discord.com/users/233320628235665408"], "credit links open");
+await press("wvm");
+assert.deepEqual(opened.splice(0), ["https://instagram.com/wvm"], "instagram opens");
+await press("wvmuser");
+assert.deepEqual(globalThis.__profile, { userId: "233320628235665408" }, "discord profile opens inside the app");
+assert.deepEqual(opened, [], "discord does not leave the app");
 
 const open = (page, title) => mount(Sub, { navigation: nav, route: { params: { page, title } } });
 
@@ -281,13 +297,21 @@ assert.ok(has("This page hit an error.") && has("boom"), "error boundary catches
 await press("Open legacy panel"); assert.equal(state.panel, true);
 globalThis.__boom = false;
 
-// ===== 8. theme colours follow Discord =====
+// ===== 8. black by default; an installed theme that restyles backgrounds wins =====
 __d((g, r, i, a, m) => { m.exports = { colors: { BACKGROUND_BASE_LOWEST: Symbol("bg"), TEXT_STRONG: Symbol("tx") }, meta: { resolveSemanticColor: (t, ref) => (String(ref).includes("bg") ? "#101114" : "#fafafa") }, unsafe_rawColors: {} }; }, 20, []);
 __d((g, r, i, a, m) => { m.exports = { getName: () => "ThemeStore", theme: "dark" }; }, 21, []);
 __r(20); __r(21);
 await new Promise((r) => setTimeout(r, 450));   // palette is cached for 400 ms
 mount(Root, { navigation: nav, route: {} });
-assert.equal(all(tree, (n) => n.type === "ScrollView")[0].props.style.backgroundColor, "#101114", "screen uses Discord's background colour");
+assert.equal(all(tree, (n) => n.type === "ScrollView")[0].props.style.backgroundColor, "#000000", "still black with Discord's own palette around");
+__hb.theme.apply({ name: "Night", semanticColors: { BACKGROUND_BASE_LOWEST: { dark: "#0b0c10" } } });
+await new Promise((r) => setTimeout(r, 450));
+mount(Root, { navigation: nav, route: {} });
+assert.equal(all(tree, (n) => n.type === "ScrollView")[0].props.style.backgroundColor, "#0b0c10", "theme background overrides the black");
+__hb.theme.remove();
+await new Promise((r) => setTimeout(r, 450));
+mount(Root, { navigation: nav, route: {} });
+assert.equal(all(tree, (n) => n.type === "ScrollView")[0].props.style.backgroundColor, "#000000", "back to black when the theme is removed");
 
 console.log("UI OK");
 process.exit(0);
