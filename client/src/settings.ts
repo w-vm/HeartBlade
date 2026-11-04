@@ -9,7 +9,7 @@ import { log, warn } from "./log";
  */
 export interface SettingsReport {
   rendererFound: boolean; listInserted: boolean; candidates: Array<{ keys: string[] }>; error?: string;
-  cfgKeyCount?: number; cfgInfo?: any; moduleKeys?: Record<string, string[]>; rendererLike?: Array<{ path: string; keyCount: number; sample: string[] }>; attempts?: number; cfgSample?: string[]; entryShape?: any; hits?: Array<{ path: string; len: number; score: number; head: string[] }>;
+  unsupported?: boolean; probe?: any; settingsExports?: Array<{ m: number; key: string; kind: string }>; cfgKeyCount?: number; cfgInfo?: any; moduleKeys?: Record<string, string[]>; rendererLike?: Array<{ path: string; keyCount: number; sample: string[] }>; attempts?: number; cfgSample?: string[]; entryShape?: any; hits?: Array<{ path: string; len: number; score: number; head: string[] }>;
 }
 
 interface Hit { arr: string[]; path: string; score: number }
@@ -89,37 +89,46 @@ export function installSettingsEntry(): SettingsReport {
 
     report.attempts = ++attempts;
     const mod = metro.findLoaded((e) => !!e.SETTING_RENDERER_CONFIG);
-    let cfg = mod?.SETTING_RENDERER_CONFIG;
+    const cfg = mod?.SETTING_RENDERER_CONFIG;
     if (!cfg) { if (attempts <= 1) warn("settings: renderer config not found"); return report; }
     report.rendererFound = true;
-    report.cfgInfo = describe(cfg);
-    report.moduleKeys = {};
-    for (const m of metro.findAllLoaded((e) => { try { return Object.keys(e).some((k) => /^SETTING/i.test(k)); } catch { return false; } }).slice(0, 8)) {
-      try { report.moduleKeys[Object.keys(m).filter((k) => /^SETTING/i.test(k))[0]] = Object.keys(m).slice(0, 15); } catch { /* ignore */ }
+    report.cfgInfo = { ...describe(cfg), fnName: (cfg as any).name, fnLen: (cfg as any).length };
+
+    // Only a plain object of definitions is understood. Anything else means Discord changed its settings
+    // internals: stop (no retries, no guessing, nothing gets modified) and collect hints for the next fix.
+    if (typeof cfg !== "object" || Object.getPrototypeOf(cfg) !== Object.prototype) {
+      done = true;
+      report.unsupported = true;
+      const found: Array<{ m: number; key: string; kind: string }> = [];
+      let j = 0;
+      for (const m of metro.findAllLoaded(() => true)) {
+        const idx = j++;
+        try {
+          for (const k of Object.keys(m).slice(0, 200)) {
+            if (!/setting/i.test(k)) continue;
+            const d = Object.getOwnPropertyDescriptor(m, k);
+            if (!d || !("value" in d)) continue;
+            const v = d.value;
+            if (typeof v === "function" || (v && typeof v === "object")) found.push({ m: idx, key: k, kind: typeof v });
+          }
+        } catch { /* ignore */ }
+        if (found.length >= 60) break;
+      }
+      report.settingsExports = found;
+      // Probe: it may be a lazy getter that returns the real config. Read-only, we only record its shape.
+      try {
+        const r = (cfg as any)();
+        report.probe = { type: typeof r, plain: !!r && Object.getPrototypeOf(r) === Object.prototype, count: r && typeof r === "object" ? Object.keys(r).length : 0, sample: r && typeof r === "object" ? Object.keys(r).slice(0, 15) : [], entry: r && typeof r === "object" ? shapeOf(r[Object.keys(r)[0]]) : null };
+      } catch (e: any) { report.probe = { error: String(e?.message ?? e) }; }
+      warn("settings: unsupported Discord settings layout, row not added (use the shake gesture)");
+      return report;
     }
 
-    let cfgKeys = new Set<string>(Object.keys(cfg));
-    if (cfgKeys.size < 10) {
-      // The exported config is empty at this point; look for the object that actually holds the definitions.
-      const like: Array<{ path: string; keyCount: number; sample: string[]; obj: any }> = [];
-      let j = 0;
-      for (const m of metro.findAllLoaded(() => true)) findRendererLike(m, `m${j++}`, like);
-      like.sort((x, y) => y.keyCount - x.keyCount);
-      report.rendererLike = like.slice(0, 4).map(({ path, keyCount, sample }) => ({ path, keyCount, sample }));
-      if (like.length) { cfg = like[0].obj; cfgKeys = new Set<string>(Object.keys(cfg)); }
-    }
+    const cfgKeys = new Set<string>(Object.keys(cfg));
     report.cfgKeyCount = cfgKeys.size;
     report.cfgSample = [...cfgKeys].slice(0, 25);
     if (cfgKeys.size < 10) { if (attempts <= 1 || attempts % 15 === 0) warn("settings: renderer config is still empty (will retry)"); return report; }
-    const sample = cfg.ACCOUNT ?? cfg[report.cfgSample[0]];
-    report.entryShape = shapeOf(sample);
-
-    cfg.HEARTBLADE = {
-      type: "pressable",
-      title: () => "HeartBlade",
-      onPress: () => native.openPanel(),
-      icon: undefined,
-    };
+    report.entryShape = shapeOf(cfg.ACCOUNT ?? cfg[report.cfgSample[0]]);
 
     const hits: Hit[] = [];
     let i = 0;
@@ -127,13 +136,18 @@ export function installSettingsEntry(): SettingsReport {
       if (m === cfg || m === mod) continue;
       findKeyLists(m, cfgKeys, `m${i++}`, hits);
     }
-    // Prefer lists that look like the top-level settings list, then the biggest overlap.
+    // A real settings list is made almost entirely of renderer keys.
+    const good = hits.filter((h) => h.arr.length >= 5 && h.score >= h.arr.length * 0.6);
     const rank = (h: Hit) => h.score + (h.arr.includes("ACCOUNT") ? 100 : 0) + (h.arr.includes("ADVANCED") ? 100 : 0);
-    hits.sort((x, y) => rank(y) - rank(x));
+    good.sort((x, y) => rank(y) - rank(x));
     report.hits = hits.slice(0, 6).map((h) => ({ path: h.path, len: h.arr.length, score: h.score, head: h.arr.slice(0, 6) }));
 
-    const best = hits.find((h) => !h.arr.includes("HEARTBLADE"));
-    if (best) { best.arr.unshift("HEARTBLADE"); report.listInserted = true; done = true; }
+    const best = good.find((h) => !h.arr.includes("HEARTBLADE"));
+    if (best) {
+      cfg.HEARTBLADE = { type: "pressable", title: () => "HeartBlade", onPress: () => native.openPanel(), icon: undefined };
+      best.arr.unshift("HEARTBLADE");
+      report.listInserted = true; done = true;
+    }
     // Never tell the native side the row is active: we cannot verify it is visible, and that would disable the shake gesture.
     if (report.listInserted) log("settings: HeartBlade key added to a list (visibility unverified)");
     else if (attempts <= 1 || attempts % 15 === 0) warn("settings: could not find the settings list (will retry)");
