@@ -4,138 +4,214 @@ import { log, warn } from "./log";
 import { after } from "./patcher";
 
 /**
- * Adds a "HeartBlade" row to the mobile Discord settings screen.
- * Same technique as the Rain client (ra1ncord/rain, plugins/_core/settings/patches/tabs.tsx), verified against
- * Discord 352's bytecode:
- *   1. SETTING_RENDERER_CONFIG (modules/user_settings/core/native/SettingsRendererConfig) maps setting keys to
- *      definitions. It is sealed, so we replace the export with an accessor that returns the original plus our entry.
- *   2. The overview screen calls createList({ sections: [{ label, settings: [keys] }] }) (SettingBuilders). An "after"
- *      hook splices an extra section into that same array.
- * Nothing is modified unless every piece below was found.
+ * Adds a "HeartBlade" row to the mobile Discord settings screen (same idea as Rain's settings/patches/tabs.tsx):
+ *   1. SETTING_RENDERER_CONFIG (key -> row definition) is replaced by an accessor that returns the original plus our row.
+ *   2. createList({ sections: [{ label, settings: [keys] }] }) (SettingBuilders) gets an "after" hook that splices an
+ *      extra section into the overview screen's section array.
+ *
+ * What changed vs. 0.1.0 (row never appeared: sectionsInserted stayed 0):
+ *   - We no longer poll for the settings modules. Discord loads them lazily, the first time Settings opens, and the
+ *     overview list is built in that same render, so a 2s poll always installed the hook one render too late.
+ *     Now every module is inspected the moment its factory finishes (before anything can call it), plus a scan of
+ *     the modules that were already loaded.
+ *   - createList is patched on EVERY module that exposes it (barrels / re-exports), not just the first match.
+ *   - Patching uses defineProperty (see patcher.ts) and is verified, instead of a silently-ignored assignment.
+ *   - The enum lookup is optional: "ACCOUNT" / "SUPPORT" string keys are used as a fallback.
  */
 export interface SettingsReport {
   builders: boolean; enumFound: boolean; configFound: boolean; configKeys: number;
   configRegistered: boolean; patched: boolean; sectionsInserted: number; rowRendered: boolean;
   attempts: number; error?: string; hint?: any; guard?: string; desc?: any;
+  createListTargets?: number; createListCalls?: number; overviewSeen?: boolean; patchErrors?: string[];
 }
 
 const KEY = "HEARTBLADE";
 let done = false;
 let attempts = 0;
-let patched = false;
 let registered = false;
 let inserted = 0;
 let rendered = false;
+let listening = false;
+let overviewSeen = false;
+let createListCalls = 0;
+let configKeys = 0;
+let lastSample: any;
+let disabled = false;
+const targets = new WeakSet<object>();
+let targetCount = 0;
+const patchErrors: string[] = [];
 
 export const settingsDone = () => done;
 
-// Crash guard for this feature only: if a launch that enabled it never reached the "ok" mark, it stays off
-// (until a newer client bumps GUARD_VERSION). The shake gesture keeps working either way.
+// ---- crash guard (this feature only; the shake gesture keeps working either way) --------------------------------
+// "rendering" is set when the row is first inserted and becomes "ok" after 4s. If the app died in between, that is one
+// strike: the feature is skipped for ONE launch, then retried; a second consecutive strike disables it until the
+// guard version is bumped. (Before, a single strike - e.g. closing the app within 4s of opening Settings - locked it
+// off forever.)
 const GUARD_FILE = "settings-guard.json";
-const GUARD_VERSION = 5;
-const readGuard = () => native.readJSON<{ v: number; state: string } | null>(GUARD_FILE, null);
-const setGuard = (state: string) => { try { native.writeJSON(GUARD_FILE, { v: GUARD_VERSION, state }); } catch { /* ignore */ } };
+const GUARD_VERSION = 6;
+type Guard = { v: number; state: string; fails?: number };
+const readGuard = () => native.readJSON<Guard | null>(GUARD_FILE, null);
+const setGuard = (state: string, fails = 0) => { try { native.writeJSON(GUARD_FILE, { v: GUARD_VERSION, state, fails }); } catch { /* ignore */ } };
 const later = (ms: number, fn: () => void) => { if (typeof setTimeout === "function") setTimeout(fn, ms); };
 
 const isPlain = (o: any) => !!o && typeof o === "object" && Object.getPrototypeOf(o) === Object.prototype;
 const keyCount = (o: any) => { try { return Object.keys(o).length; } catch { return 0; } };
-const findHolder = () =>
-  metro.findAllLoaded((e) => { try { return isPlain(e.SETTING_RENDERER_CONFIG) && keyCount(e.SETTING_RENDERER_CONFIG) >= 50; } catch { return false; } })[0];
+const asEnum = (): any => { try { return metro.findLoaded((e) => isPlain(e.MobileUserSettings))?.MobileUserSettings; } catch { return undefined; } };
+
+let borrowedIcon: any;
+const iconFrom = (cfg: any) => {
+  if (typeof borrowedIcon === "function") return borrowedIcon;
+  try {
+    const en = asEnum();
+    const i = cfg?.[en?.ACKNOWLEDGEMENTS ?? "ACKNOWLEDGEMENTS"]?.IconComponent ?? cfg?.[en?.ACCOUNT ?? "ACCOUNT"]?.IconComponent;
+    if (typeof i === "function") borrowedIcon = i;
+  } catch { /* ignore */ }
+  return typeof borrowedIcon === "function" ? borrowedIcon : () => null; // never leave IconComponent undefined
+};
+
+function registerConfig(holder: any) {
+  if (registered) return;
+  const cfg = holder.SETTING_RENDERER_CONFIG;
+  const d = Object.getOwnPropertyDescriptor(holder, "SETTING_RENDERER_CONFIG");
+  if (d?.get) return; // already an accessor (ours or somebody else's)
+  let original = cfg;
+  const ok = Reflect.defineProperty(holder, "SETTING_RENDERER_CONFIG", {
+    enumerable: true,
+    configurable: true,
+    get: () => ({
+      ...original,
+      [KEY]: {
+        type: "pressable",
+        IconComponent: iconFrom(original),
+        useTitle: () => { rendered = true; return "HeartBlade"; },
+        onPress: () => native.openPanel(),
+        withArrow: true,
+      },
+    }),
+    set: (v) => { original = v; },
+  });
+  if (!ok || !holder.SETTING_RENDERER_CONFIG?.[KEY]) { patchErrors.push("config registration not visible"); return; }
+  registered = true;
+  configKeys = keyCount(cfg);
+  lastSample = { desc: d ? { writable: d.writable, configurable: d.configurable } : null };
+}
+
+const has = (s: any, ...keys: any[]) => Array.isArray(s?.settings) && keys.some((k) => k !== undefined && s.settings.includes(k));
+
+function onCreateList(args: any[], ret: any) {
+  createListCalls++;
+  const sections = args[0]?.sections;
+  if (!Array.isArray(sections)) return;
+  const en = asEnum();
+  const account = [en?.ACCOUNT, "ACCOUNT"];
+  if (!sections.some((s: any) => has(s, ...account))) return;   // only the settings overview list
+  overviewSeen = true;
+  const section = { label: "HeartBlade", title: "HeartBlade", settings: [KEY] };
+  const place = (arr: any[]) => {
+    if (arr.some((s: any) => has(s, KEY))) return false;          // already there
+    const at = arr.findIndex((s: any) => has(s, en?.SUPPORT, "SUPPORT"));
+    arr.splice(at >= 0 ? at : arr.length, 0, section);
+    return true;
+  };
+  if (inserted === 0) {
+    setGuard("rendering", readGuard()?.fails ?? 0);
+    later(4000, () => { if (readGuard()?.state === "rendering") setGuard("ok", 0); });
+  }
+  if (place(sections)) inserted++;
+  // If createList already copied the sections into its return value, patch that copy too.
+  const rs = ret?.sections;
+  if (Array.isArray(rs) && rs !== sections) place(rs);
+}
+
+function patchCreateList(target: any) {
+  if (targets.has(target)) return;
+  targets.add(target);
+  try {
+    after(target, "createList", (args, ret) => { try { onCreateList(args, ret); } catch { /* never break Discord's settings screen */ } return ret; });
+    targetCount++;
+    log("settings: hooked createList");
+  } catch (e: any) {
+    patchErrors.push(String(e?.message ?? e).slice(0, 120));
+  }
+}
+
+function inspect(c: any) {
+  if (disabled || c == null || (typeof c !== "object" && typeof c !== "function")) return;
+  let fn: any, cfg: any;
+  try { fn = c.createList; } catch { fn = undefined; }
+  if (typeof fn === "function") patchCreateList(c);
+  if (!registered) {
+    try { cfg = c.SETTING_RENDERER_CONFIG; } catch { cfg = undefined; }
+    if (isPlain(cfg) && keyCount(cfg) >= 50) { try { registerConfig(c); } catch (e: any) { patchErrors.push(String(e?.message ?? e).slice(0, 120)); } }
+  }
+}
+
+function startListening() {
+  if (listening) return;
+  listening = true;
+  const off = metro.onModuleInit((_id, ex) => {
+    for (const c of metro.candidatesOf(ex)) inspect(c);
+    if (registered && targetCount > 0 && overviewSeen) off(); // everything is hooked and proven; stop inspecting modules
+  });
+}
 
 export function installSettingsEntry(): SettingsReport {
+  attempts++;
   const report: SettingsReport = {
-    builders: false, enumFound: false, configFound: false, configKeys: 0,
-    configRegistered: registered, patched, sectionsInserted: inserted, rowRendered: rendered, attempts: ++attempts,
+    builders: targetCount > 0, enumFound: false, configFound: registered, configKeys,
+    configRegistered: registered, patched: targetCount > 0, sectionsInserted: inserted, rowRendered: rendered, attempts,
   };
   try {
     if (attempts === 1) {
       const g = readGuard();
-      report.guard = g ? `${g.v}:${g.state}` : "none";
-      if (g && g.v === GUARD_VERSION && (g.state === "rendering" || g.state === "failed")) {
-        setGuard("failed");
-        done = true;
-        warn(`settings: disabled because the previous launch did not finish cleanly (${g.state}); shake still works`);
-        return report;
+      report.guard = g ? `${g.v}:${g.state}:${g.fails ?? 0}` : "none";
+      if (g && g.v === GUARD_VERSION) {
+        const fails = g.fails ?? 0;
+        if (g.state === "rendering") {
+          // previous launch died while the row was on screen: strike
+          setGuard(fails + 1 >= 2 ? "failed" : "retry", fails + 1);
+          if (fails + 1 >= 2) { disabled = true; done = true; warn("settings: disabled after 2 unclean launches; shake still works"); return report; }
+          disabled = true; done = true;
+          warn("settings: skipped this launch because the previous one did not finish cleanly; will retry next launch");
+          return report;
+        }
+        if (g.state === "failed") { disabled = true; done = true; warn("settings: disabled by crash guard; shake still works"); return report; }
       }
+      startListening();
     }
 
-    const builders: any = metro.findLoaded((e) => typeof e.createList === "function");
-    report.builders = !!builders;
-    const en: any = metro.findLoaded((e) => isPlain(e.MobileUserSettings))?.MobileUserSettings;
+    // scan modules that were initialised before we got here
+    metro.forEachLoaded((c) => inspect(c));
+
+    const en = asEnum();
     report.enumFound = !!en && en.ACCOUNT !== undefined;
-    const holder: any = findHolder();
-    const cfg: any = holder?.SETTING_RENDERER_CONFIG;
-    report.configFound = !!cfg;
-    report.configKeys = cfg ? keyCount(cfg) : 0;
+    report.builders = targetCount > 0;
+    report.patched = targetCount > 0;
+    report.configFound = registered;
+    report.configRegistered = registered;
+    report.configKeys = configKeys;
+    if (lastSample) report.desc = lastSample.desc;
 
-    if (!builders || !report.enumFound || !cfg) {
-      if (attempts <= 1 || attempts % 15 === 0) warn("settings: waiting for Discord settings modules (will retry)");
-      return report;
-    }
-    if (cfg[en.ACCOUNT] === undefined) {
-      report.hint = { sampleConfigKeys: Object.keys(cfg).slice(0, 8), account: String(en.ACCOUNT) };
+    if (!registered || targetCount === 0) {
+      if (attempts <= 1 || attempts % 15 === 0) warn("settings: waiting for Discord settings modules (will retry; hooks fire on module load)");
+    } else {
+      if (!done) log("settings: HeartBlade section hooked into the overview list");
       done = true;
-      warn("settings: config does not contain known keys, row not added (use the shake gesture)");
-      return report;
     }
-
-    if (!registered) {
-      // Borrow Discord's own icon from a real sibling row; never leave IconComponent undefined.
-      const icon: any = cfg[en.ACKNOWLEDGEMENTS]?.IconComponent;
-      const entry = {
-        type: "pressable",
-        IconComponent: typeof icon === "function" ? icon : () => null,
-        useTitle: () => { rendered = true; return "HeartBlade"; },
-        onPress: () => native.openPanel(),
-        withArrow: true,
-      };
-      const d = Object.getOwnPropertyDescriptor(holder, "SETTING_RENDERER_CONFIG");
-      report.desc = d ? { get: !!d.get, set: !!d.set, writable: d.writable, configurable: d.configurable } : null;
-      let original = cfg;
-      Object.defineProperty(holder, "SETTING_RENDERER_CONFIG", {
-        enumerable: true,
-        configurable: true,
-        get: () => ({ ...original, [KEY]: entry }),
-        set: (v) => { original = v; },
-      });
-      const seen: any = holder.SETTING_RENDERER_CONFIG;
-      if (!seen || !seen[KEY]) { done = true; report.hint = { verifyFailed: true }; warn("settings: registration not visible, row not added"); return report; }
-      registered = true;
-    }
-
-    if (!patched) {
-      setGuard("installing");
-      later(5000, () => { if (readGuard()?.state === "installing") setGuard("ok"); });
-      after(builders, "createList", (args, ret) => {
-        try {
-          const sections = args[0]?.sections;
-          if (!Array.isArray(sections)) return;
-          const has = (s: any, k: any) => Array.isArray(s?.settings) && s.settings.includes(k);
-          if (!sections.some((s: any) => has(s, en.ACCOUNT))) return;   // only the settings overview list
-          if (sections.some((s: any) => has(s, KEY))) return;           // already there
-          if (inserted === 0) {
-            setGuard("rendering");
-            later(4000, () => { if (readGuard()?.state === "rendering") setGuard("ok"); });
-          }
-          const at = sections.findIndex((s: any) => has(s, en.SUPPORT));
-          sections.splice(at >= 0 ? at : sections.length, 0, { label: "HeartBlade", title: "HeartBlade", settings: [KEY] });
-          inserted++;
-        } catch { /* never break Discord's settings screen */ }
-        return ret;
-      });
-      patched = true;
-      log("settings: HeartBlade section hooked into the overview list");
-    }
-    done = true;
-    report.configRegistered = registered; report.patched = patched;
   } catch (e: any) {
     report.error = String(e?.message ?? e);
     done = true; // do not retry in a loop; the report says what failed
     warn("settings: failed", report.error);
   }
   report.sectionsInserted = inserted; report.rowRendered = rendered;
+  report.createListTargets = targetCount; report.createListCalls = createListCalls; report.overviewSeen = overviewSeen;
+  if (patchErrors.length) report.patchErrors = patchErrors.slice(0, 4);
   return report;
 }
 
 /** Live counters for the debug report (they change when the settings screen is opened). */
-export const settingsStats = () => ({ registered, patched, sectionsInserted: inserted, rowRendered: rendered });
+export const settingsStats = () => ({
+  registered, patched: targetCount > 0, sectionsInserted: inserted, rowRendered: rendered,
+  createListTargets: targetCount, createListCalls, overviewSeen,
+});
