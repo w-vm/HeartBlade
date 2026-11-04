@@ -107,9 +107,7 @@ static void EvaluateClient(jsi::Runtime &rt) {
     %orig;
 
     @try {
-        InstallHostObject(runtime);
-
-        // Crash guard: if the last launch never reached the "all good" mark, turn the client off.
+        // Crash guard FIRST: if the last launch never reached the "all good" mark, turn the client off.
         NSFileManager *fm = NSFileManager.defaultManager;
         NSURL *flag = HBResolve(@"booting");
         if ([fm fileExistsAtPath:flag.path]) {
@@ -119,6 +117,7 @@ static void EvaluateClient(jsi::Runtime &rt) {
         }
         if (!HBClientEnabled()) { HBLog(@"client is disabled"); return; }
         [@"1" writeToURL:flag atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        InstallHostObject(runtime);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             [[NSFileManager defaultManager] removeItemAtURL:flag error:nil];
         });
