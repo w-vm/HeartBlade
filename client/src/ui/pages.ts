@@ -2,11 +2,11 @@ import * as native from "../native";
 import { BRAND } from "../brand";
 import { log, error } from "../log";
 import { moduleCount } from "../metro";
-import { runningPlugins, pluginSettings, hasPluginSettings } from "../plugins";
+import { runningPlugins, pluginSettings } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, needsRestart, markChanged } from "../manager";
-import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
+import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, SwipeRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
 
@@ -58,31 +58,26 @@ function useChrome(props: any) {
   }, []);
 }
 
-function showDetails(kind: Kind, id: string, link: string, onRemoved: () => void) {
-  const m = readMeta(kind, id);
-  const lines = [m.version && `Version ${m.version}`, m.author && `By ${m.author}`, m.description, link].filter(Boolean).join("\n\n");
-  alert(m.name, lines, [{ text: "Close", style: "cancel" }, { text: "Remove", style: "destructive", onPress: () => confirm(`Remove ${m.name}?`, "Its files and saved data will be deleted.", "Remove", () => { remove(kind, id); onRemoved(); }, true) }]);
-}
-
 // ---- root ---------------------------------------------------------------------------------------------------
 
 /** Discord credit: the author's account (avatar + username) read from Discord itself; tapping opens the profile inside the app. */
-function DiscordRow() {
+function DiscordRow(props: { id?: string } | null) {
   const { useState, useEffect } = RX();
   const { Image } = RN();
-  const [user, setUser] = useState(() => cachedUser(BRAND.discordId));
+  const id = props?.id ?? BRAND.discordId;
+  const [user, setUser] = useState(() => cachedUser(id));
   useEffect(() => {
     if (user) return;
     let alive = true;
-    loadUser(BRAND.discordId).then((u) => { if (alive && u) setUser(u); }, () => { /* keep the fallback */ });
+    loadUser(id).then((u) => { if (alive && u) setUser(u); }, () => { /* keep the fallback */ });
     return () => { alive = false; };
   }, []);
   return Row({
     left: user?.avatar ? h(Image, { source: { uri: user.avatar }, style: { width: 32, height: 32, borderRadius: 16 } }) : null,
     title: user ? user.username : "Discord",
-    subtitle: user ? undefined : BRAND.discordId,
+    subtitle: user ? undefined : id,
     chevron: true,
-    onPress: () => openProfile(BRAND.discordId),
+    onPress: () => openProfile(id),
   });
 }
 
@@ -163,14 +158,13 @@ function ManagerPage(props: any) {
   const [adding, setAdding] = useState(false);
   const entries = listEntries(kind);
 
-  const details = (id: string, link: string) => showDetails(kind, id, link, bump);
-
   const rows = entries.map((e) => {
     const m = readMeta(kind, e.id);
     const sub = [m.version && `v${m.version}`, m.author].filter(Boolean).join(" · ") || e.url;
-    // A plugin that has settings opens them on tap; everything else (and long press) shows details + remove.
-    const open = () => (isPlugin && hasPluginSettings(e.id) ? go(props, "pluginSettings", m.name, { id: e.id }) : details(e.id, e.url));
-    return SwitchRow({ title: m.name, subtitle: sub, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open, onLongPress: () => details(e.id, e.url) });
+    // Tap: info page (details, settings when the plugin has them, author). Swipe left: delete.
+    const open = () => go(props, "info", m.name, { kind, id: e.id });
+    return h(SwipeRow, { key: e.id, label: "Delete", onDelete: () => { remove(kind, e.id); bump(); } },
+      SwitchRow({ title: m.name, subtitle: sub, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open }));
   });
 
   const kids: any[] = [];
@@ -178,7 +172,7 @@ function ManagerPage(props: any) {
   kids.push(Group({
     title: `${isPlugin ? "Plugins" : "Themes"}${entries.length ? ` · ${entries.length}` : ""}`,
     headerRight: PlusButton({ onPress: () => setAdding(true) }),
-    footer: entries.length ? (isPlugin ? "Tap a plugin to open its settings, or for details if it has none. Hold for details and to remove it." : "Tap an item for details or to remove it.") : undefined,
+    footer: entries.length ? `Tap ${isPlugin ? "a plugin" : "a theme"} for its info${isPlugin ? " and settings" : ""}. Swipe left to delete.` : undefined,
     children: rows.length ? rows : [Row({ title: isPlugin ? "No plugins yet" : "No themes yet", subtitle: "Tap + to add one from a link.", center: true })],
   }));
   // The dialog sits next to the screen (not inside the list), so a restart banner appearing above does not remount it.
@@ -198,23 +192,40 @@ function ManagerPage(props: any) {
       : null);
 }
 
-// ---- plugin settings ----------------------------------------------------------------------------------------
+// ---- plugin / theme info ------------------------------------------------------------------------------------
 
-function PluginSettingsPage(props: any) {
+/** Info page of one plugin or theme: details, its own settings (plugins that have them), and who made it. */
+function InfoPage(props: any) {
   const { View } = RN();
-  const bump = useRefresh(props);
+  useRefresh(props);
+  const kind: Kind = props?.route?.params?.kind === "theme" ? "theme" : "plugin";
   const id: string = props?.route?.params?.id ?? "";
-  const Settings = pluginSettings(id);
-  const link = listEntries("plugin").find((e) => e.id === id)?.url ?? "";
+  const entry = listEntries(kind).find((e) => e.id === id);
+  const m = readMeta(kind, id);
+  const link = entry?.url ?? "";
+  const Settings = kind === "plugin" ? pluginSettings(id) : undefined;
+  const author = (m.author ?? "").trim();
 
   const kids: any[] = [];
   if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
-  kids.push(Settings
-    ? h(View, { style: { marginBottom: 22 } }, h(Settings, { key: id }))
-    : Group({ children: [Row({ title: "No settings", subtitle: "This plugin does not have settings, or it is not running right now.", center: true })] }));
+
   kids.push(Group({
-    children: [Row({ title: "Details and remove", chevron: true, onPress: () => showDetails("plugin", id, link, () => { bump(); try { props?.navigation?.goBack?.(); } catch { /* ignore */ } }) })],
+    title: kind === "plugin" ? "Plugin" : "Theme",
+    children: [
+      Row({ title: m.name, subtitle: m.description, lines: 8 }),
+      m.version ? Row({ title: "Version", value: String(m.version) }) : null,
+      entry ? Row({ title: "Status", value: entry.enabled ? "Enabled" : "Disabled" }) : null,
+      link ? Row({ title: "Source", subtitle: link, lines: 2, onPress: () => openUrl(link) }) : null,
+    ],
   }));
+
+  if (Settings) kids.push(h(View, { style: { marginBottom: 22 } }, h(Settings, { key: id })));
+
+  // Made by: same credit as the HeartBlade page, with the Discord account only (no Instagram).
+  if (author) {
+    const mine = author.toLowerCase() === BRAND.author.toLowerCase();
+    kids.push(Group({ title: "Made by", children: [mine ? h(DiscordRow, null) : Row({ title: author })] }));
+  }
   return Screen({ children: kids });
 }
 
@@ -370,7 +381,7 @@ const PAGES: Record<string, (p: any) => any> = {
   root: (p) => h(RootPage, p),
   plugins: (p) => h(ManagerPage, { ...p, kind: "plugin" }),
   themes: (p) => h(ManagerPage, { ...p, kind: "theme" }),
-  pluginSettings: (p) => h(PluginSettingsPage, p),
+  info: (p) => h(InfoPage, p),
   developer: (p) => h(DeveloperPage, p),
   logs: (p) => h(LogsPage, p),
   console: (p) => h(ConsolePage, p),

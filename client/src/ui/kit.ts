@@ -219,6 +219,46 @@ export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) =>
 }
 
 /**
+ * iOS style swipe to delete: drag the row to the left to reveal a red button, tap it to delete.
+ * Built on RN's own PanResponder + Animated (no gesture-handler dependency). Use it as a component: h(SwipeRow, {...}, row).
+ * If Animated / PanResponder are missing it just renders the row.
+ */
+export function SwipeRow(p: { onDelete: () => void; label?: string; children?: any }) {
+  const { useRef, useState } = RX();
+  const { View, Text, Pressable, Animated, PanResponder } = RN(); const P = palette();
+  const W = 92;
+  const x = useRef(null as any);
+  const opened = useRef(false);
+  const responder = useRef(null as any);
+  const [isOpen, setOpen] = useState(false);
+  if (!Animated || !PanResponder) return p.children;
+  if (!x.current) x.current = new Animated.Value(0);
+  const settle = (to: number) => {
+    opened.current = to !== 0; setOpen(to !== 0);
+    try { Animated.spring(x.current, { toValue: to, useNativeDriver: true, bounciness: 0, speed: 22 }).start(); } catch { x.current.setValue(to); }
+  };
+  if (!responder.current) {
+    const base = () => (opened.current ? -W : 0);
+    responder.current = PanResponder.create({
+      // Only a mostly horizontal drag takes over, so the list keeps scrolling vertically and the switch keeps working.
+      onMoveShouldSetPanResponder: (_e: any, g: any) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_e: any, g: any) => x.current.setValue(Math.max(-W - 28, Math.min(0, base() + g.dx))),
+      onPanResponderRelease: (_e: any, g: any) => settle(base() + g.dx < -W / 2 ? -W : 0),
+      onPanResponderTerminate: () => settle(base()),
+    });
+  }
+  return h(View, { style: { overflow: "hidden", backgroundColor: P.danger } },
+    h(View, { style: { position: "absolute", top: 0, bottom: 0, right: 0, width: W } },
+      h(Pressable, { onPress: () => { settle(0); p.onDelete(); }, accessibilityLabel: p.label ?? "Delete", style: { flex: 1, alignItems: "center", justifyContent: "center" } },
+        h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, p.label ?? "Delete"))),
+    h(Animated.View, { ...responder.current.panHandlers, style: { backgroundColor: P.card, transform: [{ translateX: x.current }] } },
+      p.children,
+      // While open, a tap on the row only closes it (it must not toggle or open anything).
+      isOpen ? h(Pressable, { onPress: () => settle(0), style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } }) : null));
+}
+
+/**
  * "+" dialog: paste a link, install it, and show success or failure right inside the dialog.
  * Rendered only while open, so every opening starts clean.
  */

@@ -1,4 +1,4 @@
-// Account Manager v0.2.0 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.2.1 (HeartBlade plugin): /token, /login, encrypted account switcher.
 // Vault: HMAC-CTR + encrypt-then-MAC (pure JS), random key, no passphrase.
 
 const Vault = (() => {
@@ -196,8 +196,8 @@ const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "1000000000000000001";
 const BOT_NAME = "HeartBlade";
-// Put a Shinobu gif at plugins/accounts/avatar.gif in the repo and it is used as the avatar of /token replies.
-const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
+// Avatar of the /token reply: plugins/accounts/avatar.png in the repo (replace the file to change it).
+const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.png";
 
 const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
 const log = (m) => safe(() => hb.logger.log("[accounts] " + m));
@@ -363,7 +363,34 @@ function patchCopyButton(un) {
     const t = currentToken(); if (t) { copyText(t); say("Token", "Copied. The clipboard is cleared after 60 seconds."); }
   }));
 }
-// Bot avatar for the reply.
+// Bot avatar for the reply. Discord builds the avatar URL from the author's avatar hash, which does not exist for our local
+// bot, so the URL is fixed in three places: the URL helpers, and (the part that always works) the Image component itself.
+const isBotUri = (u) => typeof u === "string" && u.indexOf(BOT_ID) !== -1 && u.indexOf(BOT_AVATAR) === -1;
+const fixSource = (src) => {
+  if (!src) return null;
+  if (Array.isArray(src)) { const i = src.findIndex((x) => x && isBotUri(x.uri)); if (i < 0) return null; const c = src.slice(); c[i] = Object.assign({}, c[i], { uri: BOT_AVATAR }); return c; }
+  return isBotUri(src.uri) ? Object.assign({}, src, { uri: BOT_AVATAR }) : null;
+};
+function patchImage(un, host, key) {
+  let ok = false;
+  safe(() => {
+    const target = host[key];
+    if (target && typeof target.render === "function") {            // forwardRef component (React Native >= 0.72)
+      un.push(hb.patcher.before(target, "render", (args) => {
+        const p = args[0]; const s = p && fixSource(p.source);
+        if (s) return [Object.assign({}, p, { source: s }), args[1]];
+      }));
+      ok = true;
+    } else if (typeof target === "function") {                        // plain function component
+      un.push(hb.patcher.before(host, key, (args) => {
+        const p = args[0]; const s = p && fixSource(p.source);
+        if (s) return [Object.assign({}, p, { source: s })].concat(args.slice(1));
+      }));
+      ok = true;
+    }
+  });
+  return ok;
+}
 function patchAvatar(un) {
   if (!BOT_AVATAR) return;
   const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" };
@@ -373,6 +400,8 @@ function patchAvatar(un) {
       if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR;
     })));
   }
+  const img = patchImage(un, RN, "Image");
+  log("avatar hooks: image=" + img);
 }
 
 // ── Slash commands: /token and /login ──
@@ -473,18 +502,36 @@ function addToTree(node, depth) {
   return R.cloneElement(node, { children: Array.isArray(ch) ? ch.concat([entry]) : [ch, entry].filter(Boolean) });
 }
 let sheetPatched = false;
+let sheetLogged = false;
 function patchSheet(un, mod) {
   if (sheetPatched) return;
-  un.push(hb.patcher.after(mod, "default", (args, ret) => { try { return addToTree(ret, 0) || undefined; } catch (e) { return undefined; } }));
+  un.push(hb.patcher.after(mod, "default", (args, ret) => {
+    try {
+      const out = addToTree(ret, 0);
+      if (!sheetLogged) { sheetLogged = true; log(out ? "account sheet rendered, entry added" : "account sheet rendered but its layout was not recognised"); }
+      return out || undefined;
+    } catch (e) { return undefined; }
+  }));
   sheetPatched = true;
   log("account menu entry installed");
 }
-const isSheet = (m) => safe(() => typeof m.default === "function" && m.default.name === "YouAccountActionSheet", false);
+// "YouAccountActionSheet" is the sheet of your profile picture; a few close names are accepted in case a build renames it.
+const SHEET_RE = /^(You)?(Account|Profile|UserSettings)?(Action)?Sheet$|YouAccountActionSheet|AccountActionSheet|AccountSwitcher/;
+const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : ""), "");
+const isSheet = (m) => safe(() => /AccountActionSheet|YouAccountActionSheet/.test(fnName(m)), false);
+const looksLikeSheet = (m) => safe(() => { const n = fnName(m); return n && SHEET_RE.test(n) && /Account/.test(n); }, false);
 function installSheet(un) {
-  const mod = findMod(isSheet);
+  const mod = findMod(isSheet) || findMod(looksLikeSheet);
   if (mod) return safe(() => patchSheet(un, mod));
-  const off = hb.metro.onModuleInit((id, ex) => { if (!sheetPatched && ex && isSheet(ex)) safe(() => patchSheet(un, ex)); });
+  const off = hb.metro.onModuleInit((id, ex) => { if (!sheetPatched && ex && (isSheet(ex) || looksLikeSheet(ex))) safe(() => patchSheet(un, ex)); });
   un.push(off);
+  // Not found yet: say so in the log, with the closest names, so the right one can be added (Developer > Logs).
+  setTimeout(() => safe(() => {
+    if (sheetPatched) return;
+    const near = hb.metro.findAll((m) => m && !isStub(m) && /Account|Status/.test(fnName(m)));
+    const names = (Array.isArray(near) ? near : []).map(fnName).filter(Boolean).slice(0, 20);
+    log("account sheet not found yet. Open your profile sheet once; candidates: " + (names.join(", ") || "none"));
+  }), 12000);
 }
 
 const undo = [];
@@ -499,6 +546,7 @@ return {
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
+    sheetPatched = false; sheetLogged = false;      // so turning the plugin back on installs the entry again
     safe(() => nativeUnpatch && nativeUnpatch());
     secrets.clear();
   },

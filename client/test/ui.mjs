@@ -128,6 +128,8 @@ const RN = {
   Switch: (props) => { if (globalThis.__boom) throw new Error("boom"); return React.createElement("Switch", props); },
   NativeModules: { BundleUpdaterManager: { reload: () => { state.reloaded = true; } } },
   StyleSheet: { hairlineWidth: 1 }, Linking: { openURL: (u) => opened.push(u) },
+  Animated: { Value: class { constructor(v) { this.v = v; } setValue(v) { this.v = v; } }, View: "AnimatedView", spring: () => ({ start: (cb) => cb && cb() }) },
+  PanResponder: { create: (cfg) => ({ panHandlers: { __cfg: cfg } }) },
 };
 
 // ---- load the bundle (before __d exists, like the real app) ----
@@ -242,17 +244,32 @@ await press("Install");
 assert.ok(has("Failed"), "bad link reports a failure in the dialog");
 assert.ok(row("Retry"), "can retry");
 await press("Cancel");
-await press("Cool Plug"); const det = alerts.pop(); assert.equal(det.t, "Cool Plug"); assert.ok(det.b.some((b) => b.text === "Remove"), "plugin without settings: tap shows details");
+await press("Cool Plug");
+assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "info", title: "Cool Plug", kind: "plugin", id: "cool-plug" }], "tap opens the info page (also for a plugin without settings)");
+assert.equal(alerts.length, 0, "no details alert any more");
+assert.ok(has("Swipe left to delete"), "footer explains the swipe");
 const sw = all(row("Hello").children, (n) => n.type === "Switch")[0];
 assert.equal(sw.props.style.alignSelf, "center", "switch is vertically centred");
-// a running plugin that exposes settings opens its own page on tap (Hello is started at boot with a settings component)
+// info page of a running plugin that exposes settings: details + its own settings + author (Discord only)
 await press("Hello");
-assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "pluginSettings", title: "Hello", id: "hello" }], "tap opens the plugin's settings page");
-assert.equal(alerts.length, 0, "no details alert for a plugin with settings");
-const holdHello = row("Hello"); holdHello.props.onLongPress(); await flush();
-const holdAlert = alerts.pop(); assert.equal(holdAlert.t, "Hello"); assert.ok(holdAlert.b.some((b) => b.text === "Remove"), "hold still offers details and remove");
-mount(Sub, { navigation: nav, route: { params: { page: "pluginSettings", title: "Hello", id: "hello" } } });
-assert.ok(has("Hello settings body") && has("Details and remove"), "plugin settings page renders the plugin's component");
+assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "info", title: "Hello", kind: "plugin", id: "hello" }], "tap opens the info page");
+mount(Sub, { navigation: nav, route: { params: { page: "info", title: "Hello", kind: "plugin", id: "hello" } } });
+assert.ok(has("Hello settings body"), "info page renders the plugin's own settings");
+assert.ok(has("Version") && has("1.0.0") && has("Source") && has("Made by"), "info page shows details and the author");
+assert.ok(texts(tree).includes("wvmuser") && !texts(tree).includes("wvm"), "author is the Discord account only, no Instagram");
+assert.ok(!has("Remove") && !has("Details and remove"), "no remove button on the info page (swipe instead)");
+mount(Sub, { navigation: nav, route: { params: { page: "info", title: "Cool Plug", kind: "plugin", id: "cool-plug" } } });
+assert.ok(has("Cool Plug") && has("1.2.3") && texts(tree).includes("me") && !has("settings body"), "other authors are shown by name; no settings block without settings");
+open("plugins", "Plugins");
+// swipe left to delete
+{
+  const pan = all(tree, (n) => n.type === "AnimatedView")[0];
+  pan.props.__cfg.onPanResponderRelease(null, { dx: -120 }); await flush();
+  assert.ok(has("Delete"), "red Delete button is there");
+  await press("Delete");
+  assert.ok(!reg().some((e) => e.id === "hello") && reg().some((e) => e.id === "cool-plug"), "swiping the first row and tapping Delete removes only that plugin");
+  assert.ok(!has("v1.0.0 · wvm"), "deleted plugin disappears from the list");
+}
 open("plugins", "Plugins");
 
 // ===== 4. themes page =====

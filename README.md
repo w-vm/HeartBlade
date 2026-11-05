@@ -38,7 +38,7 @@ Back up your IPA first. If you break it, that is your problem.
 
 Open Discord settings and tap **HeartBlade**.
 
-- **Plugins** and **Themes**: add from a URL, toggle, swipe to delete.
+- **Plugins** and **Themes**: add from a URL, toggle, tap for info and settings, swipe left to delete.
 - **Developer**: update the client, load a bundle from your own server, view logs, copy a debug report.
 
 Restart Discord after changing anything.
