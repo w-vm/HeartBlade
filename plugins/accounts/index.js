@@ -1,4 +1,4 @@
-// Account Manager v0.3.0 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.1 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -59,13 +59,13 @@ const RN = hb.ReactNative;
 const R = hb.React;
 const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
-const BOT_ID = "134808286003200001"; // snowflake date = 2016-01-08 (Kizumonogatari I premiere) -> "Member Since"
+const BOT_ID = "94945620787200001"; // snowflake date = 2015-09-20 (earliest year Discord allows) -> "Member Since"
 const BOT_NAME = "HeartBlade";
-const DEBUG = true; // shows a one-time alert with profile patch status; set false when done
+const DEBUG = false; // shows a one-time alert with profile patch status; set false when done
 const GOLD = "#F5D63D"; // Shinobu yellow (chat name color)
 const PROFILE_PRIMARY = 0xF5D63D; // profile theme colors (edit to match the gif)
 const PROFILE_SECONDARY = 0x8A6A12;
-const BOT_BIO = "Kakaka! Forged by that master of mine, @u6oa.\nTouch not his key, mortal, lest I feast upon thee.";
+const BOT_BIO = "Kakaka! Made by my master <@233320628235665408>.";
 const BOT_BANNER = "https://images.steamusercontent.com/ugc/991240935447261386/12C1E71B9C0C1415ACBFF4263EA5855568BC62D4/?imw=1200&imh=1200&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false";
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
 
