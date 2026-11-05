@@ -1,6 +1,6 @@
 {
-  "name": "HB Accounts",
-  "description": "Show/copy your token, /login with a token, and an encrypted multi-account switcher.",
-  "version": "0.1.1",
+  "name": "Account Manager",
+  "description": "Show your token privately (/token), /login with a token, and switch between saved accounts. Tokens are stored encrypted and never shown.",
+  "version": "0.2.0",
   "author": "wvm"
 }

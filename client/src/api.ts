@@ -1,6 +1,7 @@
 import * as metro from "./metro";
 import { scoped } from "./patcher";
 import * as native from "./native";
+import * as kit from "./ui/kit";
 import { log, warn, error } from "./log";
 
 /** Per-plugin persistent key/value store backed by <dir>/data/<id>.json */
@@ -54,6 +55,8 @@ export function createApi(id: string, name: string) {
     },
     ui: {
       alert(title: string, message?: string) { reactNative()?.Alert?.alert(title, message); },
+      /** HeartBlade's own building blocks (same look as its pages): Group, Row, SwitchRow, Screen, palette, ... */
+      kit,
     },
   };
   return { api, patcher };

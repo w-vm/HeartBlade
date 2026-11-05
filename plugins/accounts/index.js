@@ -1,9 +1,5 @@
-// HB Accounts v0.1.1: token viewer, /login, encrypted multi-account vault.
-// Vault: PBKDF2-HMAC-SHA256 + HMAC-CTR + encrypt-then-MAC (pure JS).
-// HeartBlade account vault: authenticated encryption in pure JS.
-// Scheme: PBKDF2-HMAC-SHA256 -> (encKey, macKey); HMAC-SHA256 in counter mode
-// as stream cipher; Encrypt-then-MAC with HMAC-SHA256. Fails closed.
-// Output format: "v1." + base64(salt16 | nonce16 | ciphertext | tag32)
+// Account Manager v0.2.0 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Vault: HMAC-CTR + encrypt-then-MAC (pure JS), random key, no passphrase.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -73,22 +69,6 @@ const Vault = (() => {
     ipad.fill(0x36); opad.fill(0x5c);
     for (let i = 0; i < key.length; i++) { ipad[i] ^= key[i]; opad[i] ^= key[i]; }
     return sha256(concat(opad, sha256(concat(ipad, msg))));
-  }
-
-  function pbkdf2(password, salt, iterations, dkLen) {
-    const blocks = Math.ceil(dkLen / 32);
-    const out = new Uint8Array(blocks * 32);
-    for (let b = 1; b <= blocks; b++) {
-      const idx = new Uint8Array([(b >>> 24) & 255, (b >>> 16) & 255, (b >>> 8) & 255, b & 255]);
-      let u = hmac(password, concat(salt, idx));
-      const t = u.slice();
-      for (let i = 1; i < iterations; i++) {
-        u = hmac(password, u);
-        for (let j = 0; j < 32; j++) t[j] ^= u[j];
-      }
-      out.set(t, (b - 1) * 32);
-    }
-    return out.slice(0, dkLen);
   }
 
   function utf8Encode(str) {
@@ -168,16 +148,10 @@ const Vault = (() => {
     return out.slice(0, length);
   }
 
-  const ITER = 60000;
   const PREFIX = "v1.";
 
-  function deriveKeys(passphrase, salt, iter) {
-    const dk = pbkdf2(utf8Encode(passphrase), salt, iter, 64);
-    return { encKey: dk.slice(0, 32), macKey: dk.slice(32, 64) };
-  }
-
-  function seal(encKey, macKey, salt, plaintext) {
-    const nonce = randomBytes(16);
+  function seal(encKey, macKey, plaintext) {
+    const salt = randomBytes(16), nonce = randomBytes(16);
     const pt = utf8Encode(plaintext);
     const ks = keystream(encKey, nonce, pt.length);
     const ct = new Uint8Array(pt.length);
@@ -186,69 +160,53 @@ const Vault = (() => {
     return PREFIX + b64enc(concat(salt, nonce, ct, tag));
   }
 
-  function parse(blob) {
+  function open(encKey, macKey, blob) {
     if (typeof blob !== "string" || !blob.startsWith(PREFIX)) throw new Error("vault: unknown format");
     const raw = b64dec(blob.slice(PREFIX.length));
     if (raw.length < 64) throw new Error("vault: truncated");
-    return { salt: raw.slice(0, 16), nonce: raw.slice(16, 32), ct: raw.slice(32, raw.length - 32), tag: raw.slice(raw.length - 32) };
-  }
-
-  function open(encKey, macKey, p) {
-    const expect = hmac(macKey, concat(utf8Encode(PREFIX), p.salt, p.nonce, p.ct));
-    if (!ctEqual(expect, p.tag)) throw new Error("vault: wrong passphrase or corrupted data");
-    const ks = keystream(encKey, p.nonce, p.ct.length);
-    const pt = new Uint8Array(p.ct.length);
-    for (let i = 0; i < pt.length; i++) pt[i] = p.ct[i] ^ ks[i];
+    const salt = raw.slice(0, 16), nonce = raw.slice(16, 32), ct = raw.slice(32, raw.length - 32), tag = raw.slice(raw.length - 32);
+    if (!ctEqual(hmac(macKey, concat(utf8Encode(PREFIX), salt, nonce, ct)), tag)) throw new Error("vault: corrupted data");
+    const ks = keystream(encKey, nonce, ct.length);
+    const pt = new Uint8Array(ct.length);
+    for (let i = 0; i < pt.length; i++) pt[i] = ct[i] ^ ks[i];
     return utf8Decode(pt);
   }
 
-  // One key derivation per unlock; fresh random nonce for every save.
-  function createSession(passphrase, existingBlob) {
-    if (typeof passphrase !== "string" || passphrase.length < 8) {
-      throw new Error("vault: passphrase must be at least 8 characters");
-    }
-    const parsed = existingBlob ? parse(existingBlob) : null;
-    const salt = parsed ? parsed.salt : randomBytes(16);
-    const { encKey, macKey } = deriveKeys(passphrase, salt, ITER);
-    if (parsed) open(encKey, macKey, parsed); // verifies the passphrase, throws if wrong
+  // A random 256-bit key (made once, kept apart from the data) derives the cipher and MAC keys. No passphrase.
+  function create(keyB64) {
+    let key = keyB64 ? b64dec(keyB64) : randomBytes(32);
+    const encKey = hmac(key, utf8Encode("hb-enc")), macKey = hmac(key, utf8Encode("hb-mac"));
     return {
-      encrypt: (plaintext) => seal(encKey, macKey, salt, plaintext),
-      decrypt: (blob) => {
-        const p = parse(blob);
-        if (!ctEqual(p.salt, salt)) throw new Error("vault: different vault");
-        return open(encKey, macKey, p);
-      },
-      wipe: () => { encKey.fill(0); macKey.fill(0); },
+      keyB64: b64enc(key),
+      encrypt: (text) => seal(encKey, macKey, text),
+      decrypt: (blob) => open(encKey, macKey, blob),
     };
   }
 
-  return { createSession };
+  return { create };
 })();
 
-// ───────────────────────── HB Accounts ─────────────────────────
-// Commands: /token  /login [token]  /accounts
-// Rules this plugin follows: tokens are never logged, never written to storage
-// unencrypted, and only ever sent to discord.com (to validate them).
+// ───────────────────────── Account Manager ─────────────────────────
+// Tokens never appear in any UI or log: the page shows only each account's name and avatar. Tokens are kept
+// encrypted (Vault above) and only ever sent to discord.com (to validate them / to switch accounts).
 
 const RN = hb.ReactNative;
+const R = hb.React;
 const API = "https://discord.com/api/v9";
-const LOCK_AFTER_MS = 10 * 60 * 1000;
 const CLIP_CLEAR_MS = 60 * 1000;
+const BOT_ID = "1000000000000000001";
+const BOT_NAME = "HeartBlade";
+// Put a Shinobu gif at plugins/accounts/avatar.gif in the repo and it is used as the avatar of /token replies.
+const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
 
 const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
 const log = (m) => safe(() => hb.logger.log("[accounts] " + m));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const store = {
-  get: async (k) => { const v = await Promise.resolve(hb.storage.get(k)); return v === undefined ? null : v; },
-  set: async (k, v) => { await Promise.resolve(hb.storage.set(k, v)); },
-};
+const kit = safe(() => hb.ui.kit);
 
-// Any text shown to the user or logged is scrubbed of known secrets first.
 const secrets = new Set();
 const scrub = (s) => { let t = String(s); for (const x of secrets) if (x && t.includes(x)) t = t.split(x).join("***"); return t; };
 const track = (s) => { if (s) secrets.add(s); return s; };
-
-// ── UI helpers (native iOS dialogs only) ──
 const say = (title, msg) => safe(() => RN.Alert.alert(title, scrub(msg)));
 const ask = (title, msg, secure) => new Promise((resolve) => {
   try {
@@ -258,21 +216,14 @@ const ask = (title, msg, secure) => new Promise((resolve) => {
     ], secure ? "secure-text" : "plain-text");
   } catch (e) { resolve(null); }
 });
-const confirm = (title, msg, okLabel, destructive) => new Promise((resolve) => {
+const confirmAsk = (title, msg, okLabel, destructive) => new Promise((resolve) => {
   RN.Alert.alert(title, msg, [
     { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
     { text: okLabel, style: destructive ? "destructive" : "default", onPress: () => resolve(true) },
   ]);
 });
-const choose = (title, labels) => new Promise((resolve) => {
-  const options = labels.concat(["Cancel"]);
-  const cancelButtonIndex = options.length - 1;
-  try {
-    RN.ActionSheetIOS.showActionSheetWithOptions({ title, options, cancelButtonIndex }, (i) => resolve(i === cancelButtonIndex ? -1 : i));
-  } catch (e) { resolve(-1); }
-});
 
-// ── Discord internals (looked up lazily; lazy "$$loader" stubs are skipped) ──
+// ── Discord internals (lazy "$$loader" stubs are skipped) ──
 const isStub = (m) => safe(() => Object.prototype.hasOwnProperty.call(m, "$$loader") || Object.prototype.hasOwnProperty.call(m, "$$baseObject"), false);
 const hasFn = (m, k) => safe(() => typeof Object.getOwnPropertyDescriptor(m, k).value === "function", false);
 const findMod = (pred) => safe(() => { const r = hb.metro.findAll((m) => m && !isStub(m) && safe(() => pred(m), false)); return Array.isArray(r) ? r[0] : undefined; }, undefined);
@@ -282,7 +233,34 @@ const commandsMod = () => findMod((m) => hasFn(m, "getBuiltInCommands") && "BUIL
 const currentToken = () => safe(() => authStore().getToken());
 const currentId = () => safe(() => authStore().getId());
 
-// ── Token validation: asks discord.com whether the token works ──
+// ── Storage: account list (names/avatars only) + encrypted tokens ──
+const store = {
+  get: (k) => { const v = safe(() => hb.storage.get(k), undefined); return v === undefined ? null : v; },
+  set: (k, v) => safe(() => hb.storage.set(k, v)),
+};
+const vault = (() => {
+  const v = safe(() => Vault.create(store.get("vk")));
+  if (v && v.keyB64 !== store.get("vk")) store.set("vk", v.keyB64);
+  return v;
+})();
+const listAccounts = () => { const a = store.get("accounts"); return Array.isArray(a) ? a : []; };
+const readTokens = () => safe(() => { const b = store.get("tokens"); return b ? JSON.parse(vault.decrypt(b)) : {}; }, {});
+const writeTokens = (o) => store.set("tokens", vault.encrypt(JSON.stringify(o)));
+function saveAccount(token, user) {
+  const tokens = readTokens(); tokens[user.id] = token; writeTokens(tokens);
+  const rest = listAccounts().filter((a) => a.id !== user.id);
+  rest.push({ id: user.id, name: user.name, avatar: user.avatar || null });
+  store.set("accounts", rest);
+}
+function removeAccount(id) {
+  const tokens = readTokens(); delete tokens[id]; writeTokens(tokens);
+  store.set("accounts", listAccounts().filter((a) => a.id !== id));
+}
+const avatarUrl = (a) => a.avatar
+  ? "https://cdn.discordapp.com/avatars/" + a.id + "/" + a.avatar + ".png?size=96"
+  : "https://cdn.discordapp.com/embed/avatars/" + (Number(String(a.id).slice(-1)) % 5) + ".png";
+
+// ── Token validation (asks discord.com whether the token works) ──
 async function validateToken(raw) {
   const token = String(raw || "").trim().replace(/^"|"$/g, "");
   if (!token || /\s/.test(token) || token.length < 20 || token.length > 200) return { ok: false, reason: "That doesn't look like a Discord token." };
@@ -294,87 +272,10 @@ async function validateToken(raw) {
     if (!r.ok) return { ok: false, reason: "Could not verify token (HTTP " + r.status + ")." };
     const u = await r.json();
     if (!u || !u.id) return { ok: false, reason: "Unexpected reply from Discord." };
-    return { ok: true, token, user: { id: String(u.id), label: u.global_name || u.username || String(u.id) } };
+    return { ok: true, token, user: { id: String(u.id), name: u.global_name || u.username || String(u.id), avatar: u.avatar || null } };
   } catch (e) {
     return { ok: false, reason: "Network error while verifying the token." };
   }
-}
-
-// ── Email + password login (best effort; Discord may demand a captcha) ──
-async function passwordLogin(email, password) {
-  const post = async (path, body) => {
-    const r = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    return r.json().catch(() => ({}));
-  };
-  let j = await post("/auth/login", { login: email, password, undelete: false, login_source: null, gift_code_sku_id: null });
-  if (j && j.mfa && j.ticket) {
-    const code = await ask("Two-factor code", "Enter your authenticator code.", false);
-    if (!code) return { ok: false, reason: "Cancelled." };
-    j = await post("/auth/mfa/totp", { code, ticket: j.ticket, login_source: null, gift_code_sku_id: null });
-  }
-  if (j && j.token) return { ok: true, token: track(j.token) };
-  if (j && j.captcha_key) return { ok: false, reason: "Discord asked for a captcha. Use the token method instead." };
-  return { ok: false, reason: (j && j.message) || "Login failed." };
-}
-
-// ── Vault (encrypted storage) ──
-let session = null;     // Vault session, only while unlocked
-let data = null;        // { accounts: [{id,label,token,addedAt}] }
-let lockTimer = null;
-const touch = () => { clearTimeout(lockTimer); lockTimer = setTimeout(lock, LOCK_AFTER_MS); };
-function lock() { clearTimeout(lockTimer); safe(() => session && session.wipe()); session = null; data = null; log("vault locked"); }
-
-async function unlock() {
-  if (session && data) { touch(); return true; }
-  const blob = await store.get("vault");
-  let pass = await ask(blob ? "Unlock accounts" : "Create account vault",
-    blob ? "Enter your vault passphrase." : "Choose a passphrase (8+ characters). It cannot be recovered if you forget it.", true);
-  if (!pass) return false;
-  try {
-    if (!blob) {
-      const again = await ask("Confirm passphrase", "Type it again.", true);
-      if (again !== pass) { say("Vault", "Passphrases did not match."); return false; }
-    }
-    track(pass);
-    session = Vault.createSession(pass, blob);
-    data = blob ? JSON.parse(session.decrypt(blob)) : { accounts: [] };
-    if (!blob) await persist();
-    touch();
-    return true;
-  } catch (e) {
-    session = null; data = null;
-    say("Vault", /wrong passphrase/.test(String(e.message)) ? "Wrong passphrase." : "Could not open the vault: " + scrub(e.message));
-    return false;
-  } finally { pass = null; }
-}
-
-async function persist() { await store.set("vault", session.encrypt(JSON.stringify(data))); }
-
-async function saveAccount(token, user) {
-  if (!(await unlock())) return false;
-  const i = data.accounts.findIndex((a) => a.id === user.id);
-  const rec = { id: user.id, label: user.label, token, addedAt: Date.now() };
-  if (i >= 0) data.accounts[i] = rec; else data.accounts.push(rec);
-  await persist();
-  return true;
-}
-
-// ── Actions ──
-async function copySecret(text) {
-  RN.Clipboard.setString(text);
-  setTimeout(async () => { // clear the clipboard later, but only if it still holds our secret
-    try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {}
-  }, CLIP_CLEAR_MS);
-}
-
-async function cmdToken() {
-  const t = track(currentToken());
-  if (!t) return say("Token", "Could not read the current token.");
-  const preview = t.slice(0, 6) + "…(" + t.length + " chars)";
-  RN.Alert.alert("Your token", preview + "\n\nAnyone with this token controls your account. Never share it. The clipboard is cleared after 60 seconds.", [
-    { text: "Cancel", style: "cancel" },
-    { text: "Copy", onPress: () => copySecret(t) },
-  ]);
 }
 
 async function switchTo(token) {
@@ -382,131 +283,224 @@ async function switchTo(token) {
   if (!v.ok) { say("Cannot switch", v.reason); return false; }
   const act = authActions();
   if (!act) { say("Cannot switch", "Discord's login module was not found in this build."); return false; }
-  const mode = (await store.get("mode")) === "switchAccountToken" ? "switchAccountToken" : "loginToken";
-  if (currentId() === v.user.id) { say("Accounts", v.user.label + " is already the active account."); return true; }
+  const mode = store.get("mode") === "switchAccountToken" ? "switchAccountToken" : "loginToken";
+  if (currentId() === v.user.id) { say("Account Manager", v.user.name + " is already the active account."); return true; }
   try { await Promise.resolve(act[mode](v.token)); }
   catch (e) { say("Switch failed", "Discord reported an error: " + scrub(e && e.message)); return false; }
   await sleep(2500);
-  if (currentId() !== v.user.id) {
-    say("Switch unclear", "Discord did not switch to " + v.user.label + ". Open /accounts and try the other switch method.");
-    return false;
-  }
+  if (currentId() !== v.user.id) { say("Switch unclear", "Discord did not switch to " + v.user.name + "."); return false; }
   log("switched account via " + mode);
   return v;
 }
 
-async function cmdLogin(tokenArg) {
-  let token = tokenArg;
-  if (!token) token = await ask("Login with token", "Paste the token of the account to log into.", true);
-  if (!token) return;
-  const res = await switchTo(token);
-  if (!res || res === true) return;
-  if (await saveAccount(res.token, res.user)) say("Accounts", "Switched to " + res.user.label + " and saved it to the vault.");
-  else say("Accounts", "Switched to " + res.user.label + ". Not saved (vault stayed locked).");
-}
-
 async function addByToken() {
   const t = await ask("Add account", "Paste the account token.", true);
-  if (!t) return;
+  if (!t) return false;
   const v = await validateToken(t);
-  if (!v.ok) return say("Not added", v.reason);
-  if (await saveAccount(v.token, v.user)) say("Accounts", v.user.label + " was added.");
+  if (!v.ok) { say("Not added", v.reason); return false; }
+  saveAccount(v.token, v.user);
+  say("Account Manager", v.user.name + " was added.");
+  return true;
 }
 
-async function addByPassword() {
-  const email = await ask("Add account", "Email or phone", false);
-  if (!email) return;
-  const pw = await ask("Add account", "Password (never stored; only the resulting token is, encrypted).", true);
-  if (!pw) return;
-  const r = await passwordLogin(email, track(pw));
-  if (!r.ok) return say("Not added", r.reason);
-  const v = await validateToken(r.token);
-  if (!v.ok) return say("Not added", v.reason);
-  if (await saveAccount(v.token, v.user)) say("Accounts", v.user.label + " was added.");
+async function saveCurrent() {
+  const v = await validateToken(track(currentToken()));
+  if (!v.ok) { say("Not saved", v.reason); return false; }
+  saveAccount(v.token, v.user);
+  return true;
 }
 
-async function cmdAccounts() {
-  if (!(await unlock())) return;
-  const cur = currentId();
-  const mode = (await store.get("mode")) === "switchAccountToken" ? "switchAccountToken" : "loginToken";
-  const names = data.accounts.map((a) => a.label + (a.id === cur ? "  ✓" : ""));
-  const extra = ["+ Add by token", "+ Add by email & password", "Save current account", "Remove an account", "Switch method: " + mode, "Lock vault"];
-  const i = await choose("Accounts", names.concat(extra));
-  if (i < 0) return;
-  if (i < names.length) {
-    const a = data.accounts[i];
-    return void (await switchTo(a.token));
+// ── Discord's own multi-account UI (the "Add account" button with Discord's login screen) ──
+let nativeUnpatch = null;
+function setNative(on) {
+  safe(() => { nativeUnpatch && nativeUnpatch(); }); nativeUnpatch = null;
+  store.set("native", !!on);
+  if (!on) return;
+  const un = [];
+  safe(() => {
+    const m = hb.metro.findByProps("getCanUseMultiAccountMobile");
+    un.push(hb.patcher.after(m, "getCanUseMultiAccountMobile", () => true));
+  });
+  safe(() => {
+    const s = hb.metro.findByStoreName("MultiAccountStore");
+    Object.defineProperty(s, "canUseMultiAccountNotifications", { get: () => true, configurable: true });
+    un.push(() => { delete s.canUseMultiAccountNotifications; });
+  });
+  nativeUnpatch = () => un.forEach((f) => safe(f));
+}
+
+// ── Local "bot" reply (only you can see it; nothing is sent to anyone) ──
+const copyText = (text) => {
+  RN.Clipboard.setString(text);
+  setTimeout(async () => { try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {} }, CLIP_CLEAR_MS);
+};
+function sendLocal(channelId, content, withCopy) {
+  const maker = findMod((m) => hasFn(m, "createBotMessage"));
+  const recv = findMod((m) => hasFn(m, "receiveMessage") && hasFn(m, "sendMessage"));
+  if (!maker || !recv) return false;
+  const msg = maker.createBotMessage({ channelId, content, embeds: [] });
+  msg.author = Object.assign({}, msg.author, { id: BOT_ID, username: BOT_NAME, globalName: BOT_NAME, global_name: BOT_NAME, avatar: "hb", discriminator: "0", bot: true });
+  if (withCopy) msg.components = [{ type: 1, components: [{ type: 2, style: 1, label: "Copy", custom_id: "hb-copy:token" }] }];
+  recv.receiveMessage(channelId, msg);
+  return true;
+}
+function cmdToken(ctx) {
+  const t = track(currentToken());
+  const ch = safe(() => ctx.channel.id);
+  if (!t) return say("Token", "Could not read the current token.");
+  const ok = ch && safe(() => sendLocal(ch,
+    "**Your token** (only you can see this message)\n||" + t + "||\nTap **Copy**, or press and hold the hidden text to copy it. Never share it. The clipboard is cleared after 60 seconds.", true));
+  if (!ok) { copyText(t); say("Token", "Copied to your clipboard (cleared after 60 seconds)."); }
+}
+
+// Makes the Copy button of the reply work locally instead of sending an interaction to Discord.
+function patchCopyButton(un) {
+  const m = findMod((x) => hasFn(x, "executeMessageComponentInteraction"));
+  if (!m) { log("component handler not found (Copy button falls back to long-press)"); return; }
+  un.push(hb.patcher.instead(m, "executeMessageComponentInteraction", (args, orig) => {
+    const hit = safe(() => /hb-copy:token/.test(JSON.stringify(args[0])), false);
+    if (!hit) return orig(...args);
+    const t = currentToken(); if (t) { copyText(t); say("Token", "Copied. The clipboard is cleared after 60 seconds."); }
+  }));
+}
+// Bot avatar for the reply.
+function patchAvatar(un) {
+  if (!BOT_AVATAR) return;
+  const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" };
+  for (const n of Object.keys(names)) {
+    const m = findMod((x) => hasFn(x, n)); if (!m) continue;
+    safe(() => un.push(hb.patcher.after(m, n, (args, ret) => {
+      if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR;
+    })));
   }
-  switch (i - names.length) {
-    case 0: return addByToken();
-    case 1: return addByPassword();
-    case 2: {
-      const t = track(currentToken()); const v = await validateToken(t);
-      if (!v.ok) return say("Not saved", v.reason);
-      if (await saveAccount(v.token, v.user)) say("Accounts", v.user.label + " saved.");
-      return;
-    }
-    case 3: {
-      if (!data.accounts.length) return say("Accounts", "Nothing to remove.");
-      const j = await choose("Remove which account?", data.accounts.map((a) => a.label));
-      if (j < 0) return;
-      const a = data.accounts[j];
-      if (await confirm("Remove " + a.label + "?", "The saved token is deleted from the vault. The account itself is not affected.", "Remove", true)) {
-        data.accounts.splice(j, 1); await persist(); say("Accounts", a.label + " removed.");
-      }
-      return;
-    }
-    case 4: await store.set("mode", mode === "loginToken" ? "switchAccountToken" : "loginToken"); return say("Accounts", "Switch method is now " + (mode === "loginToken" ? "switchAccountToken" : "loginToken") + ".");
-    case 5: lock(); return say("Vault", "Locked.");
-  }
 }
 
-// ── Command registration (own patch, restored on unload) ──
-const guard = (fn) => (...a) => { fn(...a).catch((e) => say("Accounts", "Unexpected error: " + scrub(e && e.message))); };
-const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) => x.name === name) || {}).value : args && args[name]);
+// ── Slash commands: /token and /login ──
 const mkCmd = (name, description, options, execute) => ({
-  id: "hb-accounts-" + name, name, untranslatedName: name, displayName: name,
+  name, untranslatedName: name, displayName: name,
   description, untranslatedDescription: description, displayDescription: description,
   applicationId: "-1", inputType: 1, type: 1,
   options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: 3 })),
   execute,
 });
+const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) => x.name === name) || {}).value : args && args[name]);
 const commands = [
-  mkCmd("token", "Show or copy the token of the current account", [], guard(() => cmdToken())),
-  mkCmd("login", "Log into another account (leave token empty to enter it securely)", [{ name: "token", description: "Account token (safer: leave empty)" }],
-    guard((args) => cmdLogin(argOf(args, "token")))),
-  mkCmd("accounts", "Switch, add or remove saved accounts", [], guard(() => cmdAccounts())),
+  mkCmd("token", "Show your token privately (only you see it) with a Copy button", [], (args, ctx) => { safe(() => cmdToken(ctx)); }),
+  mkCmd("login", "Log into an account with its token (it is saved to Account Manager)", [{ name: "token", description: "Account token", required: true }],
+    (args) => { (async () => {
+      const res = await switchTo(argOf(args, "token"));
+      if (res && res !== true) { saveAccount(res.token, res.user); say("Account Manager", "Switched to " + res.user.name + " and saved it."); }
+    })().catch((e) => say("Account Manager", "Unexpected error: " + scrub(e && e.message))); }),
 ];
-
-let restore = null;
-function registerCommands() {
+function registerCommands(un) {
   const mod = commandsMod();
-  if (!mod) { log("commands module not found"); return false; }
-  const orig = mod.getBuiltInCommands;
-  const wrapped = function (...a) {
-    const r = orig.apply(this, a);
-    return Array.isArray(r) ? r.concat(commands) : r;
-  };
-  try { mod.getBuiltInCommands = wrapped; }
-  catch (e) { try { Object.defineProperty(mod, "getBuiltInCommands", { value: wrapped, configurable: true, writable: true }); } catch (e2) { log("cannot patch getBuiltInCommands"); return false; } }
-  const list = mod.BUILT_IN_COMMANDS;
-  const added = Array.isArray(list) ? commands.filter((c) => !list.includes(c)) : [];
-  added.forEach((c) => list.push(c));
-  restore = () => {
-    safe(() => { mod.getBuiltInCommands = orig; });
-    added.forEach((c) => safe(() => list.splice(list.indexOf(c), 1)));
-  };
+  if (!mod) { log("commands module not found"); return; }
+  let next = -1000;
+  commands.forEach((c, i) => { c.id = String(next - i); });
+  // Same method as Rain: append to the result of getBuiltInCommands (and nothing else, otherwise commands show twice).
+  un.push(hb.patcher.after(mod, "getBuiltInCommands", (args, res) => {
+    if (!Array.isArray(res)) return;
+    const t = args[0];
+    const mine = commands.filter((c) => !res.includes(c) && (Array.isArray(t) ? t.includes(c.type) : t === undefined || t === null || c.type === t));
+    return mine.length ? res.concat(mine) : undefined;
+  }));
   log("commands registered: " + commands.map((c) => "/" + c.name).join(", "));
-  return true;
 }
 
+// ── UI (HeartBlade page + the button inside Discord's account sheet) ──
+function AccountsContent(props) {
+  const { View, Text, Image } = RN; const { Group, Row, SwitchRow } = kit;
+  const [, set] = R.useState(0); const bump = () => set((n) => n + 1);
+  const close = props && props.onClose;
+  const cur = currentId();
+  const accounts = listAccounts();
+  const rows = accounts.map((a) => R.createElement(Row, {
+    key: a.id, title: a.name, subtitle: a.id === cur ? "Active" : undefined,
+    left: R.createElement(Image, { source: { uri: avatarUrl(a) }, style: { width: 34, height: 34, borderRadius: 17 } }),
+    right: a.id === cur ? R.createElement(Text, { style: { color: kit.palette().ok, fontSize: 18 } }, "✓") : undefined,
+    onPress: a.id === cur ? undefined : () => {
+      Promise.resolve(confirmAsk("Switch account", "Switch to " + a.name + "?", "Switch")).then(async (yes) => {
+        if (!yes) return;
+        const t = readTokens()[a.id];
+        if (!t) return say("Missing token", "Add " + a.name + " again.");
+        const r = await switchTo(t);
+        if (r) { bump(); if (close) close(); }
+      });
+    },
+    onLongPress: () => confirmAsk("Remove " + a.name + "?", "It is removed from Account Manager. The account itself is not affected.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } }),
+  }));
+  return R.createElement(View, null,
+    R.createElement(Group, { title: "Accounts", footer: "Tap an account to switch. Press and hold to remove. Tokens are stored encrypted and are never shown." },
+      rows.length ? rows : [R.createElement(Row, { key: "none", title: "No saved accounts yet", subtitle: "Use \"Save current account\" or add one below.", center: true })]),
+    R.createElement(Group, { title: "Add" },
+      [
+        R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
+        R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
+        R.createElement(SwitchRow, { key: "nat", title: "Discord's own login (email & password)", subtitle: "Turns on Discord's built-in \"Add account\" in the account menu, so you can sign in with email and password on Discord's own screen.", on: !!store.get("native"), onChange: (v) => { setNative(v); bump(); } }),
+      ]));
+}
+
+function AccountsModalEntry() {
+  const { View, Text, Modal, Pressable } = RN; const { Group, Row } = kit;
+  const [open, setOpen] = R.useState(false);
+  const P = kit.palette();
+  const cur = listAccounts().find((a) => a.id === currentId());
+  return R.createElement(View, { style: { paddingHorizontal: 16, marginTop: 12 } },
+    R.createElement(Group, null, [R.createElement(Row, { key: "am", title: "Account Manager", subtitle: cur ? cur.name : "Switch or add accounts", chevron: true, onPress: () => setOpen(true) })]),
+    R.createElement(Modal, { visible: open, animationType: "slide", presentationStyle: "pageSheet", onRequestClose: () => setOpen(false) },
+      R.createElement(View, { style: { flex: 1, backgroundColor: P.bg } },
+        R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 } },
+          R.createElement(Text, { style: { color: P.text, fontSize: 20, fontWeight: "700" } }, "Account Manager"),
+          R.createElement(Pressable, { onPress: () => setOpen(false), hitSlop: 12 }, R.createElement(Text, { style: { color: P.accent, fontSize: 17, fontWeight: "600" } }, "Done"))),
+        R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))));
+}
+
+// Adds the entry at the end of Discord's "Change Online Status" sheet (the sheet of your profile picture).
+function addToTree(node, depth) {
+  if (!node || typeof node !== "object" || !node.props) return null;
+  const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
+  const ch = node.props.children;
+  if (depth === 0 && Array.isArray(ch)) {
+    for (let i = ch.length - 1; i >= 0; i--) {
+      const c = ch[i];
+      if (c && typeof c === "object" && c.props && Array.isArray(c.props.children)) {
+        const inner = addToTree(c, 1); if (!inner) return null;
+        const copy = ch.slice(); copy[i] = inner;
+        return R.cloneElement(node, { children: copy });
+      }
+    }
+  }
+  return R.cloneElement(node, { children: Array.isArray(ch) ? ch.concat([entry]) : [ch, entry].filter(Boolean) });
+}
+let sheetPatched = false;
+function patchSheet(un, mod) {
+  if (sheetPatched) return;
+  un.push(hb.patcher.after(mod, "default", (args, ret) => { try { return addToTree(ret, 0) || undefined; } catch (e) { return undefined; } }));
+  sheetPatched = true;
+  log("account menu entry installed");
+}
+const isSheet = (m) => safe(() => typeof m.default === "function" && m.default.name === "YouAccountActionSheet", false);
+function installSheet(un) {
+  const mod = findMod(isSheet);
+  if (mod) return safe(() => patchSheet(un, mod));
+  const off = hb.metro.onModuleInit((id, ex) => { if (!sheetPatched && ex && isSheet(ex)) safe(() => patchSheet(un, ex)); });
+  un.push(off);
+}
+
+const undo = [];
 return {
   onLoad() {
-    try { if (!registerCommands()) log("commands NOT registered"); } catch (e) { log("register error: " + scrub(e && e.message)); }
+    if (!vault) return say("Account Manager", "Encryption is not available on this device.");
+    safe(() => { if (store.get("native")) setNative(true); });
+    safe(() => registerCommands(undo));
+    safe(() => patchCopyButton(undo));
+    safe(() => patchAvatar(undo));
+    if (kit) safe(() => installSheet(undo)); else log("HeartBlade client too old for the account menu entry (Developer > Update client)");
   },
   onUnload() {
-    safe(() => restore && restore());
-    lock();
+    undo.splice(0).forEach((f) => safe(f));
+    safe(() => nativeUnpatch && nativeUnpatch());
     secrets.clear();
   },
+  settings: kit ? function AccountsSettings() { return R.createElement(AccountsContent, null); } : undefined,
 };
