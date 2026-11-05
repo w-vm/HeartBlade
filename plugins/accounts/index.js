@@ -1,4 +1,4 @@
-// Account Manager v0.2.7 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.2.8 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -178,7 +178,8 @@ function patchProfile(un) {
   const store = safe(() => hb.metro.findByStoreName("UserProfileStore"));
   if (store) {
     for (const fn of ["getUserProfile", "getGuildMemberProfile"]) {
-      if (!hasFn(store, fn)) continue;
+      if (typeof store[fn] !== "function") continue; // store methods live on the prototype
+      log("profile patch: " + fn);
       safe(() => un.push(hb.patcher.after(store, fn, (args, ret) => {
         if (args[0] !== BOT_ID) return;
         return Object.assign({}, ret || {}, { userId: BOT_ID, banner: "hb", accentColor: PROFILE_PRIMARY, themeColors: [PROFILE_PRIMARY, PROFILE_SECONDARY], bio: BOT_BIO });
