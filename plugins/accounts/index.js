@@ -1,4 +1,4 @@
-// Account Manager v0.2.5 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.2.7 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -59,9 +59,13 @@ const RN = hb.ReactNative;
 const R = hb.React;
 const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
-const BOT_ID = "1000000000000000001";
-const BOT_NAME = "HeartBlade";
-const GOLD = "#E8C95A";
+const BOT_ID = "134808286003200001"; // snowflake date = 2016-01-08 (Kizumonogatari I premiere) -> "Member Since"
+const BOT_NAME = "Shinobu";
+const GOLD = "#F4DC8A"; // Shinobu blonde
+const PROFILE_PRIMARY = 0xF4DC8A; // profile theme colors (edit to match the gif)
+const PROFILE_SECONDARY = 0x6B4E1B;
+const BOT_BIO = "Kakaka! Forged by that master of mine, @u6oa.\nTouch not his key, mortal, lest I feast upon thee.";
+const BOT_BANNER = "https://images.steamusercontent.com/ugc/991240935447261386/12C1E71B9C0C1415ACBFF4263EA5855568BC62D4/?imw=1200&imh=1200&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false";
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
 
 const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
@@ -162,11 +166,35 @@ function cmdToken(ctx) {
 }
 
 // ---------- bot avatar ----------
-const isBotUri = (u) => typeof u === "string" && u.indexOf(BOT_ID) !== -1 && u.indexOf(BOT_AVATAR) === -1;
+const isBotUri = (u) => typeof u === "string" && u.indexOf(BOT_ID) !== -1 && u.indexOf(BOT_AVATAR) === -1 && u.indexOf("steamusercontent") === -1;
+const botUriFor = (u) => (String(u).indexOf("/banners/") !== -1 ? BOT_BANNER : BOT_AVATAR);
 const fixProps = (p) => { const s = p && fixSource(p.source); if (!s) return null; return Object.assign({}, p, { source: s, resizeMode: "cover", style: [p.style, { resizeMode: "cover" }] }); };
-const fixSource = (src) => { if (!src) return null; if (Array.isArray(src)) { const i = src.findIndex((x) => x && isBotUri(x.uri)); if (i < 0) return null; const c = src.slice(); c[i] = Object.assign({}, c[i], { uri: BOT_AVATAR }); return c; } return isBotUri(src.uri) ? Object.assign({}, src, { uri: BOT_AVATAR }) : null; };
+const fixSource = (src) => { if (!src) return null; if (Array.isArray(src)) { const i = src.findIndex((x) => x && isBotUri(x.uri)); if (i < 0) return null; const c = src.slice(); c[i] = Object.assign({}, c[i], { uri: botUriFor(c[i].uri) }); return c; } return isBotUri(src.uri) ? Object.assign({}, src, { uri: botUriFor(src.uri) }) : null; };
 function patchImage(un, host, key) { let ok = false; safe(() => { const target = host[key]; if (target && typeof target.render === "function") { un.push(hb.patcher.before(target, "render", (args) => { const np = fixProps(args[0]); if (np) return [np, args[1]]; })); ok = true; } else if (typeof target === "function") { un.push(hb.patcher.before(host, key, (args) => { const np = fixProps(args[0]); if (np) return [np].concat(args.slice(1)); })); ok = true; } }); return ok; }
 function patchAvatar(un) { if (!BOT_AVATAR) return; const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" }; for (const n of Object.keys(names)) { const m = findMod((x) => hasFn(x, n)); if (!m) continue; safe(() => un.push(hb.patcher.after(m, n, (args, ret) => { if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR; }))); } const img = patchImage(un, RN, "Image"); log("avatar hooks: image=" + img); }
+
+// ---------- bot profile: banner + colors ----------
+function patchProfile(un) {
+  const store = safe(() => hb.metro.findByStoreName("UserProfileStore"));
+  if (store) {
+    for (const fn of ["getUserProfile", "getGuildMemberProfile"]) {
+      if (!hasFn(store, fn)) continue;
+      safe(() => un.push(hb.patcher.after(store, fn, (args, ret) => {
+        if (args[0] !== BOT_ID) return;
+        return Object.assign({}, ret || {}, { userId: BOT_ID, banner: "hb", accentColor: PROFILE_PRIMARY, themeColors: [PROFILE_PRIMARY, PROFILE_SECONDARY], bio: BOT_BIO });
+      })));
+    }
+  }
+  const names = { getUserBannerURL: "url", getBannerURL: "url", getUserBannerSource: "src", getBannerSource: "src" };
+  for (const n of Object.keys(names)) {
+    const m = findMod((x) => hasFn(x, n)); if (!m) continue;
+    safe(() => un.push(hb.patcher.after(m, n, (args, ret) => {
+      const a = args[0];
+      if (a && (a.id === BOT_ID || a.userId === BOT_ID)) return names[n] === "src" ? { uri: BOT_BANNER } : BOT_BANNER;
+    })));
+  }
+  log("profile hooks set");
+}
 
 let hbOpenAccounts = () => {};
 
@@ -287,6 +315,7 @@ return {
     safe(() => { if (store.get("native")) setNative(true); });
     safe(() => registerCommands(undo));
     safe(() => patchAvatar(undo));
+    safe(() => patchProfile(undo));
     if (kit) safe(() => patchSheetUI(undo));
   },
   onUnload() {
