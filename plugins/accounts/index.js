@@ -1,4 +1,4 @@
-// HB Accounts v0.1.0: token viewer, /login, encrypted multi-account vault.
+// HB Accounts v0.1.1: token viewer, /login, encrypted multi-account vault.
 // Vault: PBKDF2-HMAC-SHA256 + HMAC-CTR + encrypt-then-MAC (pure JS).
 // HeartBlade account vault: authenticated encryption in pure JS.
 // Scheme: PBKDF2-HMAC-SHA256 -> (encKey, macKey); HMAC-SHA256 in counter mode
@@ -465,9 +465,10 @@ async function cmdAccounts() {
 const guard = (fn) => (...a) => { fn(...a).catch((e) => say("Accounts", "Unexpected error: " + scrub(e && e.message))); };
 const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) => x.name === name) || {}).value : args && args[name]);
 const mkCmd = (name, description, options, execute) => ({
-  id: "hb-accounts-" + name, name, displayName: name, description, displayDescription: description,
+  id: "hb-accounts-" + name, name, untranslatedName: name, displayName: name,
+  description, untranslatedDescription: description, displayDescription: description,
   applicationId: "-1", inputType: 1, type: 1,
-  options: options.map((o) => ({ name: o.name, displayName: o.name, description: o.description, displayDescription: o.description, required: !!o.required, type: 3 })),
+  options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: 3 })),
   execute,
 });
 const commands = [
