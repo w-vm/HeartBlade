@@ -184,6 +184,10 @@ const Vault = (() => {
   return { create };
 })();
 
+// ───────────────────────── Account Manager ─────────────────────────
+// Tokens never appear in any UI or log: the page shows only each account's name and avatar. Tokens are kept
+// encrypted (Vault above) and only ever sent to discord.com (to validate them / to switch accounts).
+
 const RN = hb.ReactNative;
 const R = hb.React;
 const API = "https://discord.com/api/v9";
@@ -488,7 +492,7 @@ function AccountsContent(props) {
       [
         R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
         R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
-        R.createElement(SwitchRow, { key: "nat", title: "Discord's own login (email & password)", subtitle: "Turns on Discord's built-in \"Add account\" flow so you can add another account without signing out.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Account Manager", "Discord's own add-account flow is enabled."); } }),
+        R.createElement(SwitchRow, { key: "nat", title: "Discord's own login (email & password)", subtitle: "Turns on Discord's built-in \"Add account\" in the account menu, so you can sign in with email & password.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Account Manager", "Discord's own add-account flow is enabled."); } }),
       ]));
 }
 
@@ -529,37 +533,16 @@ function addToTree(node, depth) {
 
 let sheetPatched = false;
 let sheetLogged = false;
-const SHEET_TITLES = ["Change Online Status", "Set a custom status", "Online Status", "Status"];
-const textOf = (node, out = []) => {
-  if (!node) return out;
-  if (typeof node === "string") out.push(node);
-  else if (Array.isArray(node)) node.forEach((n) => textOf(n, out));
-  else if (node && typeof node === "object") {
-    const p = node.props || {};
-    if (typeof p.title === "string") out.push(p.title);
-    if (typeof p.label === "string") out.push(p.label);
-    if (typeof p.accessibilityLabel === "string") out.push(p.accessibilityLabel);
-    if (typeof p.text === "string") out.push(p.text);
-    if (p.children) textOf(p.children, out);
-  }
-  return out;
-};
+const SHEET_TITLES = ["Change Online Status", "Set a custom status"];
 const hasTitle = (node, depth) => {
-  if (!node || depth > 18) return false;
-  const texts = textOf(node);
-  for (const txt of texts) {
-    if (typeof txt !== "string") continue;
-    const normalized = txt.trim();
-    if (!normalized) continue;
-    if (SHEET_TITLES.some((t) => t === normalized || normalized.includes(t) || t.includes(normalized))) return true;
-  }
+  if (!node || depth > 14) return false;
+  if (typeof node === "string") return SHEET_TITLES.indexOf(node) >= 0;
   if (Array.isArray(node)) return node.some((c) => hasTitle(c, depth + 1));
-  if (node && typeof node === "object") {
-    const p = node.props;
-    if (p && typeof p === "object") {
-      if (p.children && hasTitle(p.children, depth + 1)) return true;
-      if (Array.isArray(p.children) && p.children.some((c) => hasTitle(c, depth + 1))) return true;
-    }
+  const p = node.props; if (!p || typeof p !== "object") return false;
+  for (const k in p) {
+    const v = p[k];
+    if (typeof v === "string") { if (SHEET_TITLES.indexOf(v) >= 0) return true; }
+    else if (v && typeof v === "object" && (k === "children" || Array.isArray(v) || v.props)) { if (hasTitle(v, depth + 1)) return true; }
   }
   return false;
 };
@@ -569,26 +552,25 @@ const hasEntry = (node, depth) => {
   if (node.key === "hb-account-manager") return true;
   const p = node.props; return !!p && hasEntry(p.children, depth + 1);
 };
-const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : (m.displayName || m.name || "")), "");
+const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : ""), "");
 let patched = new WeakSet();
 function wrapSheet(un, mod) {
   if (!mod || patched.has(mod)) return;
   patched.add(mod);
-  const apply = (ret) => {
+  safe(() => un.push(hb.patcher.after(mod, "default", (args, ret) => {
     try {
       if (!ret || typeof ret !== "object" || !hasTitle(ret, 0) || hasEntry(ret, 0)) return undefined;
       const out = addToTree(ret, 0);
       if (!sheetLogged) {
         sheetLogged = true;
-        log("account entry added to " + fnName(mod));
+        const ch = ret.props && ret.props.children;
+        log("account entry added to " + fnName(mod) + " [root=" + ((ret.type && (ret.type.displayName || ret.type.name)) || typeof ret) + ", children=" + (Array.isArray(ch) ? "array(" + ch.length + ")" : typeof ch) + "]");
       }
       return out || undefined;
     } catch (e) { return undefined; }
-  };
-  safe(() => un.push(hb.patcher.after(mod, "default", (args, ret) => apply(ret))));
-  safe(() => un.push(hb.patcher.after(mod, "render", (args, ret) => apply(ret))));
+  })));
 }
-const sheetLike = (m) => /Sheet|Status|Profile/i.test(fnName(m) || "") || /Sheet|Status|Profile/i.test(String(m && (m.displayName || m.name || "")));
+const sheetLike = (m) => /Sheet/.test(fnName(m));
 function installSheet(un) {
   let n = 0;
   const found = safe(() => hb.metro.findAll((m) => m && !isStub(m) && sheetLike(m)), []);
