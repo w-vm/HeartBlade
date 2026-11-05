@@ -183,11 +183,14 @@ const fixSource = (src) => { if (!src) return null; if (Array.isArray(src)) { co
 function patchImage(un, host, key) { let ok = false; safe(() => { const target = host[key]; if (target && typeof target.render === "function") { un.push(hb.patcher.before(target, "render", (args) => { const np = fixProps(args[0]); if (np) return [np, args[1]]; })); ok = true; } else if (typeof target === "function") { un.push(hb.patcher.before(host, key, (args) => { const np = fixProps(args[0]); if (np) return [np].concat(args.slice(1)); })); ok = true; } }); return ok; }
 function patchAvatar(un) { if (!BOT_AVATAR) return; const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" }; for (const n of Object.keys(names)) { const m = findMod((x) => hasFn(x, n)); if (!m) continue; safe(() => un.push(hb.patcher.after(m, n, (args, ret) => { if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR; }))); } const img = patchImage(un, RN, "Image"); log("avatar hooks: image=" + img); }
 
+// إصلاح الخطأ: استخدام متغير محلي بدل global
+let hbOpenAccounts = () => {};
+
 const mkCmd = (name, description, options, execute) => ({ name, untranslatedName: name, displayName: name, description, untranslatedDescription: description, displayDescription: description, applicationId: "-1", inputType: 1, type: 1, options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: o.type || 3, choices: [], autocomplete: false })), execute });
 const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) => x.name === name) || {}).value : args && args[name]);
 
 const commands = [
-  mkCmd("accounts", "Open Account Manager", [], () => { say("Account Manager", "If this didn't open, use the button in HeartBlade Settings."); }),
+  mkCmd("accounts", "Open Account Manager", [], () => { if (hbOpenAccounts) hbOpenAccounts(); else say("Account Manager", "Go to HeartBlade Settings to open it."); }),
   mkCmd("token", "Show your token", [], (args, ctx) => { safe(() => cmdToken(ctx)); }),
   mkCmd("login", "Log in with token", [{ name: "token", description: "Token", required: true, type: 3 }], (args) => { (async () => { const res = await switchTo(argOf(args, "token")); if (res && res !== true) { saveAccount(res.token, res.user); say("Account Manager", "Switched to " + res.user.name + " and saved."); } })().catch((e) => say("Error", scrub(e && e.message))); }),
 ];
@@ -224,6 +227,13 @@ function AccountsModalEntry() {
     const { View, Text, Modal, Pressable } = RN; const { Group, Row } = kit;
     const [open, setOpen] = R.useState(false);
     const P = kit.palette(); const cur = listAccounts().find((a) => a.id === currentId());
+    
+    // هنا التعديل: ربط دالة الفتح بالمتغير المحلي بدل global
+    R.useEffect(() => { 
+        hbOpenAccounts = () => setOpen(true); 
+        return () => { hbOpenAccounts = () => {}; }; 
+    }, []);
+
     return R.createElement(View, { style: { paddingHorizontal: 16, marginTop: 12 } },
       R.createElement(Group, null, [R.createElement(Row, { key: "am", title: "Account Manager", subtitle: cur ? cur.name : "Switch or add accounts", chevron: true, onPress: () => setOpen(true) })]),
       R.createElement(Modal, { visible: open, animationType: "slide", presentationStyle: "pageSheet", onRequestClose: () => setOpen(false) },
@@ -301,6 +311,7 @@ return {
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
     sheetLogged = false; safe(() => nativeUnpatch && nativeUnpatch());
+    hbOpenAccounts = () => {};
     secrets.clear();
   },
   settings: kit ? function AccountsSettings() { return R.createElement(AccountsContent, null); } : undefined,
