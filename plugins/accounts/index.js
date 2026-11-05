@@ -1,4 +1,4 @@
-// Account Manager v0.2.3 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.2.4 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -136,54 +136,41 @@ function setNative(on) {
   nativeUnpatch = () => un.forEach((f) => safe(f));
 }
 
+// ---------- /token : plain ephemeral message (long-press -> Copy Text works) ----------
 const copyText = (text) => { RN.Clipboard.setString(text); setTimeout(async () => { try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {} }, CLIP_CLEAR_MS); };
-function sendLocal(channelId, content, withCopy) {
-  const maker = findMod((m) => hasFn(m, "createBotMessage")); const recv = findMod((m) => hasFn(m, "receiveMessage") && hasFn(m, "sendMessage"));
+
+const SHINOBU_INTRO =
+  "Kakaka! Hmph, so thou hast come begging for thy key, master?\n" +
+  "Here it is, in the very next message. Hold it to copy it, and guard it as I guard my Mister Donut.\n" +
+  "Hand it to no soul, lest they wear thy face and thy name.";
+
+function sendLocal(channelId, content) {
+  const maker = findMod((m) => hasFn(m, "createBotMessage"));
+  const recv = findMod((m) => hasFn(m, "receiveMessage") && hasFn(m, "sendMessage"));
   if (!maker || !recv) return false;
-  const embed = { type: "rich", description: content, rawDescription: content, color: 0xE8C95A };
-  const msg = maker.createBotMessage({ channelId, content: "", embeds: [embed] });
-  msg.colorString = GOLD; msg.flags = 0;
+  const msg = maker.createBotMessage({ channelId, content, embeds: [] });
+  msg.colorString = GOLD;
+  msg.flags = 64; // EPHEMERAL -> "Only you can see this message"
   msg.author = Object.assign({}, msg.author, { id: BOT_ID, username: BOT_NAME, globalName: BOT_NAME, global_name: BOT_NAME, avatar: "hb", discriminator: "0", bot: true });
-  if (withCopy) msg.components = [{ type: 1, components: [{ type: 2, style: 1, label: "Copy", custom_id: "hb-copy:token" }] }];
-  recv.receiveMessage(channelId, msg); return true;
+  recv.receiveMessage(channelId, msg);
+  return true;
 }
+
 function cmdToken(ctx) {
-  const t = track(currentToken()); const ch = safe(() => ctx.channel.id); if (!t) return say("Token", "Could not read token.");
-  const ok = ch && safe(() => sendLocal(ch, "**Your token**\n||" + t + "||\nThe clipboard is cleared after 60 seconds.", true));
+  const t = track(currentToken());
+  const ch = safe(() => ctx.channel.id);
+  if (!t) return say("Token", "Could not read token.");
+  const ok = ch && safe(() => sendLocal(ch, SHINOBU_INTRO) && sendLocal(ch, t), false);
   if (!ok) { copyText(t); say("Token", "Copied (cleared after 60s)."); }
 }
 
-function patchCopyButton(un) {
-  const m = findMod((x) => hasFn(x, "executeMessageComponentInteraction")); if (!m) return;
-  un.push(hb.patcher.instead(m, "executeMessageComponentInteraction", (args, orig) => {
-    const hit = safe(() => /hb-copy:token/.test(JSON.stringify(args[0])), false); if (!hit) return orig(...args);
-    const t = currentToken(); if (t) { copyText(t); say("Token", "Copied."); }
-  }));
-}
-function CopyButton() {
-  const { Pressable, Text } = RN;
-  return R.createElement(Pressable, { onPress: () => { const t = currentToken(); if (t) { copyText(t); say("Token", "Copied."); } }, style: { alignSelf: "flex-start", backgroundColor: GOLD, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 9, marginTop: 8 } }, R.createElement(Text, { style: { color: "#1a1a1a", fontSize: 15, fontWeight: "700" } }, "Copy"));
-}
-const isCopyDef = (v) => !!v && typeof v === "object" && (v.custom_id === "hb-copy:token" || v.customId === "hb-copy:token");
-const scanProps = (o, depth) => { if (isCopyDef(o)) return true; if (depth > 1) return false; let n = 0; for (const k in o) { if (++n > 16) break; const v = o[k]; if (v && typeof v === "object" && !v.$$typeof && (isCopyDef(v) || (Array.isArray(v) ? v.length < 6 && v.some((x) => x && typeof x === "object" && !x.$$typeof && scanProps(x, depth + 1)) : scanProps(v, depth + 1)))) return true; } return false; };
-const holdsCopy = (type, props) => typeof type === "string" || !props || typeof props !== "object" ? false : scanProps(props, 0);
-let copyHits = 0;
-function patchCopyLook(un) {
-  const ce = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped"); copyHits++; return [CopyButton, args[1] && args[1].key != null ? { key: args[1].key } : {}]; } return args; };
-  const jx = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped"); copyHits++; return [CopyButton, {}].concat(args.slice(2)); } return args; };
-  safe(() => un.push(hb.patcher.before(R, "createElement", ce)));
-  const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
-  if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", jx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", jx))); }
-  log("copy button hooked");
-}
-
+// ---------- bot avatar ----------
 const isBotUri = (u) => typeof u === "string" && u.indexOf(BOT_ID) !== -1 && u.indexOf(BOT_AVATAR) === -1;
 const fixProps = (p) => { const s = p && fixSource(p.source); if (!s) return null; return Object.assign({}, p, { source: s, resizeMode: "cover", style: [p.style, { resizeMode: "cover" }] }); };
 const fixSource = (src) => { if (!src) return null; if (Array.isArray(src)) { const i = src.findIndex((x) => x && isBotUri(x.uri)); if (i < 0) return null; const c = src.slice(); c[i] = Object.assign({}, c[i], { uri: BOT_AVATAR }); return c; } return isBotUri(src.uri) ? Object.assign({}, src, { uri: BOT_AVATAR }) : null; };
 function patchImage(un, host, key) { let ok = false; safe(() => { const target = host[key]; if (target && typeof target.render === "function") { un.push(hb.patcher.before(target, "render", (args) => { const np = fixProps(args[0]); if (np) return [np, args[1]]; })); ok = true; } else if (typeof target === "function") { un.push(hb.patcher.before(host, key, (args) => { const np = fixProps(args[0]); if (np) return [np].concat(args.slice(1)); })); ok = true; } }); return ok; }
 function patchAvatar(un) { if (!BOT_AVATAR) return; const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" }; for (const n of Object.keys(names)) { const m = findMod((x) => hasFn(x, n)); if (!m) continue; safe(() => un.push(hb.patcher.after(m, n, (args, ret) => { if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR; }))); } const img = patchImage(un, RN, "Image"); log("avatar hooks: image=" + img); }
 
-// إصلاح الخطأ: استخدام متغير محلي بدل global
 let hbOpenAccounts = () => {};
 
 const mkCmd = (name, description, options, execute) => ({ name, untranslatedName: name, displayName: name, description, untranslatedDescription: description, displayDescription: description, applicationId: "-1", inputType: 1, type: 1, options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: o.type || 3, choices: [], autocomplete: false })), execute });
@@ -227,11 +214,10 @@ function AccountsModalEntry() {
     const { View, Text, Modal, Pressable } = RN; const { Group, Row } = kit;
     const [open, setOpen] = R.useState(false);
     const P = kit.palette(); const cur = listAccounts().find((a) => a.id === currentId());
-    
-    // هنا التعديل: ربط دالة الفتح بالمتغير المحلي بدل global
-    R.useEffect(() => { 
-        hbOpenAccounts = () => setOpen(true); 
-        return () => { hbOpenAccounts = () => {}; }; 
+
+    R.useEffect(() => {
+        hbOpenAccounts = () => setOpen(true);
+        return () => { hbOpenAccounts = () => {}; };
     }, []);
 
     return R.createElement(View, { style: { paddingHorizontal: 16, marginTop: 12 } },
@@ -273,7 +259,7 @@ function patchSheetUI(un) {
     try {
         const type = args[0]; const props = args[1];
         if (!props || props.__hb_inj) return args;
-        
+
         const name = typeof type === 'string' ? type : (type?.displayName || type?.name || type?.default?.displayName || '');
         if (name.includes("Text") || name.includes("Input") || name.includes("Scroll")) return args;
 
@@ -283,7 +269,7 @@ function patchSheetUI(un) {
           if (Array.isArray(newProps.children)) newProps.children = newProps.children.concat([entry]);
           else if (newProps.children) newProps.children = [newProps.children, entry];
           else newProps.children = entry;
-          
+
           if (!sheetLogged) { sheetLogged = true; log("SUCCESS: Injected into " + name); }
           const newArgs = args.slice(); newArgs[1] = newProps; return newArgs;
         }
@@ -303,9 +289,7 @@ return {
     if (!vault) return say("Error", "Encryption unavailable.");
     safe(() => { if (store.get("native")) setNative(true); });
     safe(() => registerCommands(undo));
-    safe(() => patchCopyButton(undo));
     safe(() => patchAvatar(undo));
-    safe(() => patchCopyLook(undo));
     if (kit) safe(() => patchSheetUI(undo));
   },
   onUnload() {
