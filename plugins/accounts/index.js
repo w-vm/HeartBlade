@@ -197,8 +197,8 @@ const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "1000000000000000001";
 const BOT_NAME = "HeartBlade";
 const GOLD = "#E8C95A";
-// Avatar of the /token reply: the same gif as the banner on the HeartBlade page.
-const BOT_AVATAR = "https://heartunderblade.neocities.org/old_site/images/shinobu1.gif";
+// Avatar of the /token reply: the HeartBlade page gif, cropped to a square (plugins/accounts/avatar.gif, made by the Avatar workflow).
+const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
 
 const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
 const log = (m) => safe(() => hb.logger.log("[accounts] " + m));
@@ -342,6 +342,7 @@ function sendLocal(channelId, content, withCopy) {
   const embed = { type: "rich", description: content, rawDescription: content, color: 0xE8C95A };
   const msg = maker.createBotMessage({ channelId, content: "", embeds: [embed] });
   msg.colorString = GOLD;
+  msg.flags = 0;                  // not "ephemeral": that style adds Discord's blue bar on the left of the message
   msg.author = Object.assign({}, msg.author, { id: BOT_ID, username: BOT_NAME, globalName: BOT_NAME, global_name: BOT_NAME, avatar: "hb", discriminator: "0", bot: true });
   if (withCopy) msg.components = [{ type: 1, components: [{ type: 2, style: 1, label: "Copy", custom_id: "hb-copy:token" }] }];
   recv.receiveMessage(channelId, msg);
@@ -376,17 +377,25 @@ function CopyButton() {
   }, R.createElement(Text, { style: { color: "#1a1a1a", fontSize: 15, fontWeight: "700" } }, "Copy"));
 }
 const isCopyDef = (v) => !!v && typeof v === "object" && (v.custom_id === "hb-copy:token" || v.customId === "hb-copy:token");
+const scanProps = (o, depth) => {
+  if (isCopyDef(o)) return true;
+  if (depth > 1) return false;
+  let n = 0;
+  for (const k in o) {
+    if (++n > 16) break;
+    const v = o[k];
+    if (v && typeof v === "object" && !v.$$typeof && (isCopyDef(v) || (Array.isArray(v) ? v.length < 6 && v.some((x) => x && typeof x === "object" && !x.$$typeof && scanProps(x, depth + 1)) : scanProps(v, depth + 1)))) return true;
+  }
+  return false;
+};
 function holdsCopy(type, props) {
   if (typeof type === "string" || !props || typeof props !== "object") return false;
-  if (isCopyDef(props)) return true;
-  let n = 0;
-  for (const k in props) { if (++n > 14) break; if (isCopyDef(props[k])) return true; }
-  return false;
+  return scanProps(props, 0);
 }
 let copyHits = 0;
 function patchCopyLook(un) {
-  const ce = (args) => { if (holdsCopy(args[0], args[1])) { copyHits++; return [CopyButton, args[1] && args[1].key != null ? { key: args[1].key } : {}]; } };
-  const jx = (args) => { if (holdsCopy(args[0], args[1])) { copyHits++; return [CopyButton, {}].concat(args.slice(2)); } };
+  const ce = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped (createElement)"); copyHits++; return [CopyButton, args[1] && args[1].key != null ? { key: args[1].key } : {}]; } };
+  const jx = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped (jsx)"); copyHits++; return [CopyButton, {}].concat(args.slice(2)); } };
   safe(() => un.push(hb.patcher.before(R, "createElement", ce)));
   const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
   if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", jx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", jx))); }

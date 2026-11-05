@@ -219,19 +219,35 @@ export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) =>
   });
 }
 
+// react-native-gesture-handler ships inside Discord. Its Swipeable cooperates with the list's vertical scrolling and with the
+// navigator's back gesture (a plain JS PanResponder cannot), so it is used when it can be found.
+const gestureHandler = lz<any>(() => metro.findByProps("Swipeable", "GestureHandlerRootView") ?? metro.findByProps("Swipeable"));
+const swipeable = (): any => { try { const S = gestureHandler()?.Swipeable; return typeof S === "function" || (S && typeof S === "object") ? S : null; } catch { return null; } };
+
 /**
  * iOS style swipe to delete: drag the row to the left to reveal a red button, tap it to delete.
- * Built on RN's own PanResponder + Animated (no gesture-handler dependency). Use it as a component: h(SwipeRow, {...}, row).
- * If Animated / PanResponder are missing it just renders the row.
+ * Use it as a component: h(SwipeRow, {...}, row). Without gesture-handler it falls back to PanResponder + Animated,
+ * and without those it just renders the row.
  */
 export function SwipeRow(p: { onDelete: () => void; label?: string; children?: any }) {
   const { useRef, useState } = RX();
   const { View, Text, Pressable, Animated, PanResponder } = RN(); const P = palette();
   const W = 92;
+  const label = p.label ?? "Delete";
   const x = useRef(null as any);
   const opened = useRef(false);
   const responder = useRef(null as any);
+  const swipeRef = useRef(null as any);
   const [isOpen, setOpen] = useState(false);
+
+  const Swipeable = swipeable();
+  if (Swipeable) {
+    const action = () => h(View, { style: { width: W, backgroundColor: P.danger } },
+      h(Pressable, { onPress: () => { try { swipeRef.current?.close?.(); } catch { /* ignore */ } p.onDelete(); }, accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
+        h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, label)));
+    return h(Swipeable, { ref: swipeRef, friction: 2, overshootRight: false, rightThreshold: 40, renderRightActions: action }, p.children);
+  }
+
   if (!Animated || !PanResponder) return p.children;
   if (!x.current) x.current = new Animated.Value(0);
   const settle = (to: number) => {
@@ -240,9 +256,11 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   };
   if (!responder.current) {
     const base = () => (opened.current ? -W : 0);
+    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
     responder.current = PanResponder.create({
-      // Only a mostly horizontal drag takes over, so the list keeps scrolling vertically and the switch keeps working.
-      onMoveShouldSetPanResponder: (_e: any, g: any) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      // Capture phase: a mostly horizontal drag is ours before the list's scroll view or a parent can claim it.
+      onMoveShouldSetPanResponderCapture: horizontal,
+      onMoveShouldSetPanResponder: horizontal,
       onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_e: any, g: any) => x.current.setValue(Math.max(-W - 28, Math.min(0, base() + g.dx))),
       onPanResponderRelease: (_e: any, g: any) => settle(base() + g.dx < -W / 2 ? -W : 0),
@@ -251,8 +269,8 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   }
   return h(View, { style: { overflow: "hidden", backgroundColor: P.danger } },
     h(View, { style: { position: "absolute", top: 0, bottom: 0, right: 0, width: W } },
-      h(Pressable, { onPress: () => { settle(0); p.onDelete(); }, accessibilityLabel: p.label ?? "Delete", style: { flex: 1, alignItems: "center", justifyContent: "center" } },
-        h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, p.label ?? "Delete"))),
+      h(Pressable, { onPress: () => { settle(0); p.onDelete(); }, accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
+        h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, label))),
     h(Animated.View, { ...responder.current.panHandlers, style: { backgroundColor: P.card, transform: [{ translateX: x.current }] } },
       p.children,
       // While open, a tap on the row only closes it (it must not toggle or open anything).

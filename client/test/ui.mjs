@@ -267,6 +267,7 @@ open("plugins", "Plugins");
   pan.props.__cfg.onPanResponderRelease(null, { dx: -120 }); await flush();
   assert.ok(has("Delete"), "red Delete button is there");
   await press("Delete");
+  { const c = alerts.pop(); assert.ok(/Delete Hello/.test(c.t) && c.b.some((b) => b.text === "Delete"), "delete asks for confirmation first"); assert.ok(reg().some((e) => e.id === "hello"), "nothing is removed before confirming"); c.b[1].onPress(); await flush(); }
   assert.ok(!reg().some((e) => e.id === "hello") && reg().some((e) => e.id === "cool-plug"), "swiping the first row and tapping Delete removes only that plugin");
   assert.ok(!has("v1.0.0"), "deleted plugin disappears from the list");
 }

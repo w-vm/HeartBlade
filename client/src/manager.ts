@@ -171,10 +171,11 @@ export function updateClient(): Promise<boolean> {
  * Re-downloads every installed plugin and theme from the link it was installed with (used by "Update client").
  * Enabled / disabled state and a plugin's saved data are kept; a theme is rewritten without changing which one is active.
  */
-export function updateAll(): Promise<{ ok: number; failed: number }> {
-  const res = { ok: 0, failed: 0 };
+export function updateAll(): Promise<{ ok: number; failed: number; lines: string[] }> {
+  const res = { ok: 0, failed: 0, lines: [] as string[] };
   let chain: Promise<void> = Promise.resolve();
   for (const e of readRegistry()) {
+    const before = readMeta(e.type, e.id);
     const job = e.type === "plugin"
       ? () => installPlugin(e.url).then(() => undefined)
       : () => getText(e.url).then((t) => {
@@ -182,7 +183,11 @@ export function updateAll(): Promise<{ ok: number; failed: number }> {
         if (!th || typeof th !== "object" || !(th.semanticColors || th.rawColors)) throw new Error("not a theme");
         native.writeFile(`themes/${e.id}.json`, t);
       });
-    chain = chain.then(job).then(() => { res.ok++; }, (err: any) => { res.failed++; log(`update failed for ${e.type} ${e.id}: ${String(err?.message ?? err)}`); });
+    chain = chain.then(job).then(() => {
+      res.ok++;
+      const after = readMeta(e.type, e.id);
+      res.lines.push(`${after.name}: ${before.version && after.version && before.version !== after.version ? `${before.version} to ${after.version}` : after.version ? `v${after.version} (already current)` : "refreshed"}`);
+    }, (err: any) => { res.failed++; res.lines.push(`${before.name}: failed (${String(err?.message ?? err)})`); log(`update failed for ${e.type} ${e.id}: ${String(err?.message ?? err)}`); });
   }
   return chain.then(() => { markChanged(); return res; });
 }

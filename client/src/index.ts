@@ -7,6 +7,7 @@ import { installSettingsEntry, settingsDone, settingsStats } from "./settings";
 import { runningPlugins } from "./plugins";
 import { moduleCount } from "./metro";
 import { log, error } from "./log";
+import { startUpdateCheck } from "./updates";
 
 // Must happen synchronously, before Discord's own bundle registers its modules.
 installMetroHook();
@@ -44,6 +45,7 @@ function boot() {
   const publish = (st: any) => { last = st; native.setInfo(JSON.stringify({ client: __HB_VERSION__, modules: moduleCount(), plugins: runningPlugins(), settings: { ...st, live: settingsStats() } })); };
   publish(settings);
   log("ready");
+  try { startUpdateCheck(); } catch (e) { error("update check", e); }
   // Discord fills its settings modules lazily, so keep trying; afterwards keep the live counters fresh for a while
   // (they change when the settings screen is opened).
   if (typeof setTimeout === "function") {
