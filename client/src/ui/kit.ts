@@ -186,7 +186,7 @@ export function PlusButton(p: { onPress: () => void }) {
 export interface RowProps {
   title: string; subtitle?: string; value?: string; left?: any;
   onPress?: () => void; onLongPress?: () => void; chevron?: boolean; right?: any;
-  accent?: boolean; destructive?: boolean; center?: boolean; lines?: number; mono?: boolean;
+  accent?: boolean; destructive?: boolean; center?: boolean; lines?: number; mono?: boolean; extra?: any;
 }
 
 export function Row(p: RowProps) {
@@ -203,7 +203,8 @@ export function Row(p: RowProps) {
       p.left ? h(View, { style: { marginRight: 12, width: 34, alignItems: "center", justifyContent: "center" } }, p.left) : null,
       h(View, { style: { flex: 1, paddingVertical: 12, alignItems: p.center ? "center" : "stretch" } },
         h(Text, { style: { color, fontSize: p.mono ? 12 : 16, fontWeight: p.center || p.accent ? "600" : "500", fontFamily: p.mono ? "Menlo" : undefined } }, p.title),
-        p.subtitle ? h(Text, { numberOfLines: p.lines ?? 2, style: { color: P.muted, fontSize: 13, marginTop: 2, lineHeight: 18 } }, p.subtitle) : null),
+        p.subtitle ? h(Text, { numberOfLines: p.lines ?? 2, style: { color: P.muted, fontSize: 13, marginTop: 2, lineHeight: 18 } }, p.subtitle) : null,
+        p.extra ?? null),
       p.value != null ? h(Text, { numberOfLines: 1, style: { color: P.muted, fontSize: 15, marginLeft: 10, maxWidth: "45%" } }, p.value) : null,
       p.right ? h(View, { style: { marginLeft: 12, alignSelf: "center", alignItems: "center", justifyContent: "center" } }, p.right) : null,
       p.chevron ? h(Text, { style: { color: P.muted, fontSize: 24, marginLeft: 8, marginTop: -2 } }, "›") : null,

@@ -1,4 +1,4 @@
-// Account Manager v0.2.1 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.2.3 (HeartBlade plugin): /token, /login, encrypted account switcher.
 // Vault: HMAC-CTR + encrypt-then-MAC (pure JS), random key, no passphrase.
 
 const Vault = (() => {
@@ -196,6 +196,7 @@ const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "1000000000000000001";
 const BOT_NAME = "HeartBlade";
+const GOLD = "#E8C95A";
 // Avatar of the /token reply: the same gif as the banner on the HeartBlade page.
 const BOT_AVATAR = "https://heartunderblade.neocities.org/old_site/images/shinobu1.gif";
 
@@ -338,7 +339,9 @@ function sendLocal(channelId, content, withCopy) {
   const maker = findMod((m) => hasFn(m, "createBotMessage"));
   const recv = findMod((m) => hasFn(m, "receiveMessage") && hasFn(m, "sendMessage"));
   if (!maker || !recv) return false;
-  const msg = maker.createBotMessage({ channelId, content, embeds: [] });
+  const embed = { type: "rich", description: content, rawDescription: content, color: 0xE8C95A };
+  const msg = maker.createBotMessage({ channelId, content: "", embeds: [embed] });
+  msg.colorString = GOLD;
   msg.author = Object.assign({}, msg.author, { id: BOT_ID, username: BOT_NAME, globalName: BOT_NAME, global_name: BOT_NAME, avatar: "hb", discriminator: "0", bot: true });
   if (withCopy) msg.components = [{ type: 1, components: [{ type: 2, style: 1, label: "Copy", custom_id: "hb-copy:token" }] }];
   recv.receiveMessage(channelId, msg);
@@ -363,9 +366,40 @@ function patchCopyButton(un) {
     const t = currentToken(); if (t) { copyText(t); say("Token", "Copied. The clipboard is cleared after 60 seconds."); }
   }));
 }
+// Yellow Copy button. Discord only has blue / grey / green / red buttons, so the message's Copy button is swapped for our own
+// (same place, gold) the moment Discord creates it. If Discord builds it differently, the normal button stays and still works.
+function CopyButton() {
+  const { Pressable, Text } = RN;
+  return R.createElement(Pressable, {
+    onPress: () => { const t = currentToken(); if (t) { copyText(t); say("Token", "Copied. The clipboard is cleared after 60 seconds."); } },
+    style: ({ pressed }) => ({ alignSelf: "flex-start", backgroundColor: GOLD, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 9, marginTop: 8, opacity: pressed ? 0.7 : 1 }),
+  }, R.createElement(Text, { style: { color: "#1a1a1a", fontSize: 15, fontWeight: "700" } }, "Copy"));
+}
+const isCopyDef = (v) => !!v && typeof v === "object" && (v.custom_id === "hb-copy:token" || v.customId === "hb-copy:token");
+function holdsCopy(type, props) {
+  if (typeof type === "string" || !props || typeof props !== "object") return false;
+  if (isCopyDef(props)) return true;
+  let n = 0;
+  for (const k in props) { if (++n > 14) break; if (isCopyDef(props[k])) return true; }
+  return false;
+}
+let copyHits = 0;
+function patchCopyLook(un) {
+  const ce = (args) => { if (holdsCopy(args[0], args[1])) { copyHits++; return [CopyButton, args[1] && args[1].key != null ? { key: args[1].key } : {}]; } };
+  const jx = (args) => { if (holdsCopy(args[0], args[1])) { copyHits++; return [CopyButton, {}].concat(args.slice(2)); } };
+  safe(() => un.push(hb.patcher.before(R, "createElement", ce)));
+  const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
+  if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", jx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", jx))); }
+  log("copy button look hooked (createElement" + (rt ? " + jsx" : "") + ")");
+}
+
 // Bot avatar for the reply. Discord builds the avatar URL from the author's avatar hash, which does not exist for our local
 // bot, so the URL is fixed in three places: the URL helpers, and (the part that always works) the Image component itself.
 const isBotUri = (u) => typeof u === "string" && u.indexOf(BOT_ID) !== -1 && u.indexOf(BOT_AVATAR) === -1;
+const fixProps = (p) => {            // fixed avatar source, and "cover" so the banner shaped gif is cropped, not squashed
+  const s = p && fixSource(p.source); if (!s) return null;
+  return Object.assign({}, p, { source: s, resizeMode: "cover", style: [p.style, { resizeMode: "cover" }] });
+};
 const fixSource = (src) => {
   if (!src) return null;
   if (Array.isArray(src)) { const i = src.findIndex((x) => x && isBotUri(x.uri)); if (i < 0) return null; const c = src.slice(); c[i] = Object.assign({}, c[i], { uri: BOT_AVATAR }); return c; }
@@ -377,14 +411,14 @@ function patchImage(un, host, key) {
     const target = host[key];
     if (target && typeof target.render === "function") {            // forwardRef component (React Native >= 0.72)
       un.push(hb.patcher.before(target, "render", (args) => {
-        const p = args[0]; const s = p && fixSource(p.source);
-        if (s) return [Object.assign({}, p, { source: s }), args[1]];
+        const np = fixProps(args[0]);
+        if (np) return [np, args[1]];
       }));
       ok = true;
     } else if (typeof target === "function") {                        // plain function component
       un.push(hb.patcher.before(host, key, (args) => {
-        const p = args[0]; const s = p && fixSource(p.source);
-        if (s) return [Object.assign({}, p, { source: s })].concat(args.slice(1));
+        const np = fixProps(args[0]);
+        if (np) return [np].concat(args.slice(1));
       }));
       ok = true;
     }
@@ -506,39 +540,54 @@ function addToTree(node, depth) {
 }
 let sheetPatched = false;
 let sheetLogged = false;
-function patchSheet(un, mod) {
-  if (sheetPatched) return;
-  un.push(hb.patcher.after(mod, "default", (args, ret) => {
+// The entry goes at the bottom of the "Change Online Status" sheet (profile picture). That sheet is found by what it shows
+// (its title text), not by a component name, so it keeps working when a build renames things.
+const SHEET_TITLES = ["Change Online Status", "Set a custom status"];
+const hasTitle = (node, depth) => {
+  if (!node || depth > 14) return false;
+  if (typeof node === "string") return SHEET_TITLES.indexOf(node) >= 0;
+  if (Array.isArray(node)) return node.some((c) => hasTitle(c, depth + 1));
+  const p = node.props; if (!p || typeof p !== "object") return false;
+  for (const k in p) {
+    const v = p[k];
+    if (typeof v === "string") { if (SHEET_TITLES.indexOf(v) >= 0) return true; }
+    else if (v && typeof v === "object" && (k === "children" || Array.isArray(v) || v.props)) { if (hasTitle(v, depth + 1)) return true; }
+  }
+  return false;
+};
+const hasEntry = (node, depth) => {
+  if (!node || typeof node !== "object" || depth > 16) return false;
+  if (Array.isArray(node)) return node.some((c) => hasEntry(c, depth + 1));
+  if (node.key === "hb-account-manager") return true;
+  const p = node.props; return !!p && hasEntry(p.children, depth + 1);
+};
+const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : ""), "");
+let patched = new WeakSet();
+function wrapSheet(un, mod) {
+  if (!mod || patched.has(mod)) return;
+  patched.add(mod);
+  safe(() => un.push(hb.patcher.after(mod, "default", (args, ret) => {
     try {
+      if (!ret || typeof ret !== "object" || !hasTitle(ret, 0) || hasEntry(ret, 0)) return undefined;
       const out = addToTree(ret, 0);
       if (!sheetLogged) {
         sheetLogged = true;
-        const ch = ret && ret.props && ret.props.children;
-        log((out ? "account sheet rendered, entry added" : "account sheet rendered but its layout was not recognised") + " [root=" + (ret && ret.type && (ret.type.displayName || ret.type.name) || typeof ret) + ", children=" + (Array.isArray(ch) ? "array(" + ch.length + ")" : typeof ch) + "]");
+        const ch = ret.props && ret.props.children;
+        log("account entry added to " + fnName(mod) + " [root=" + ((ret.type && (ret.type.displayName || ret.type.name)) || typeof ret) + ", children=" + (Array.isArray(ch) ? "array(" + ch.length + ")" : typeof ch) + "]");
       }
       return out || undefined;
     } catch (e) { return undefined; }
-  }));
-  sheetPatched = true;
-  log("account menu entry installed");
+  })));
 }
-// "YouAccountActionSheet" is the sheet of your profile picture; a few close names are accepted in case a build renames it.
-const SHEET_RE = /^(You)?(Account|Profile|UserSettings)?(Action)?Sheet$|YouAccountActionSheet|AccountActionSheet|AccountSwitcher/;
-const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : ""), "");
-const isSheet = (m) => safe(() => /AccountActionSheet|YouAccountActionSheet/.test(fnName(m)), false);
-const looksLikeSheet = (m) => safe(() => { const n = fnName(m); return n && SHEET_RE.test(n) && /Account/.test(n); }, false);
+const sheetLike = (m) => /Sheet/.test(fnName(m));
 function installSheet(un) {
-  const mod = findMod(isSheet) || findMod(looksLikeSheet);
-  if (mod) return safe(() => patchSheet(un, mod));
-  const off = hb.metro.onModuleInit((id, ex) => { if (!sheetPatched && ex && (isSheet(ex) || looksLikeSheet(ex))) safe(() => patchSheet(un, ex)); });
+  let n = 0;
+  const found = safe(() => hb.metro.findAll((m) => m && !isStub(m) && sheetLike(m)), []);
+  (Array.isArray(found) ? found : []).slice(0, 500).forEach((m) => { n++; wrapSheet(un, m); });
+  sheetPatched = true;
+  const off = hb.metro.onModuleInit((id, ex) => { if (ex && !isStub(ex) && sheetLike(ex)) wrapSheet(un, ex); });
   un.push(off);
-  // Not found yet: say so in the log, with the closest names, so the right one can be added (Developer > Logs).
-  setTimeout(() => safe(() => {
-    if (sheetPatched) return;
-    const near = hb.metro.findAll((m) => m && !isStub(m) && /Account|Status/.test(fnName(m)));
-    const names = (Array.isArray(near) ? near : []).map(fnName).filter(Boolean).slice(0, 20);
-    log("account sheet not found yet. Open your profile sheet once; candidates: " + (names.join(", ") || "none"));
-  }), 12000);
+  log("account entry: watching " + n + " sheet components for the Online Status sheet");
 }
 
 const undo = [];
@@ -549,11 +598,12 @@ return {
     safe(() => registerCommands(undo));
     safe(() => patchCopyButton(undo));
     safe(() => patchAvatar(undo));
+    safe(() => patchCopyLook(undo));
     if (kit) safe(() => installSheet(undo)); else log("HeartBlade client too old for the account menu entry (Developer > Update client)");
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    sheetPatched = false; sheetLogged = false;      // so turning the plugin back on installs the entry again
+    sheetPatched = false; sheetLogged = false; patched = new WeakSet();      // so turning the plugin back on installs the entry again
     safe(() => nativeUnpatch && nativeUnpatch());
     secrets.clear();
   },

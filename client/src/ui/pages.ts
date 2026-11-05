@@ -5,7 +5,7 @@ import { moduleCount } from "../metro";
 import { runningPlugins, pluginSettings } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
-import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, needsRestart, markChanged } from "../manager";
+import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, updateAll, needsRestart, markChanged } from "../manager";
 import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, SwipeRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
@@ -81,12 +81,21 @@ function DiscordRow(props: { id?: string } | null) {
   });
 }
 
-/** Plugins whose manifest has "pinned": true get their own row on the HeartBlade page (opens their info + settings page). */
-function pinnedRows(props: any): any[] {
-  return listEntries("plugin").filter((e) => e.enabled && native.readJSON<any>(`plugins/${e.id}/manifest.json`, {})?.pinned).map((e) => {
-    const m = readMeta("plugin", e.id);
-    return Row({ title: m.name, subtitle: pluginSettings(e.id) ? "Open its settings" : "Not running, restart Discord", chevron: true, onPress: () => go(props, "info", m.name, { kind: "plugin", id: e.id }) });
-  });
+/** Small author credit for list rows: the author's Discord avatar + name (only for the project's author; others show their name). */
+function AuthorChip(props: { name: string }) {
+  const { useState, useEffect } = RX();
+  const { View, Text, Image } = RN(); const P = palette();
+  const mine = props.name.toLowerCase() === BRAND.author.toLowerCase();
+  const [user, setUser] = useState(() => (mine ? cachedUser(BRAND.discordId) : null));
+  useEffect(() => {
+    if (!mine || user) return;
+    let alive = true;
+    loadUser(BRAND.discordId).then((u) => { if (alive && u) setUser(u); }, () => { /* keep the fallback */ });
+    return () => { alive = false; };
+  }, []);
+  return h(View, { style: { flexDirection: "row", alignItems: "center", marginTop: 5 } },
+    mine && user?.avatar ? h(Image, { source: { uri: user.avatar }, style: { width: 15, height: 15, borderRadius: 8, marginRight: 5 } }) : null,
+    h(Text, { numberOfLines: 1, style: { color: P.muted, fontSize: 12 } }, mine ? (user?.username ?? "Discord") : props.name));
 }
 
 function RootPage(props: any) {
@@ -121,10 +130,9 @@ function RootPage(props: any) {
     ],
   }));
 
-  // plugins + themes (+ plugins that pin themselves here, like Account Manager)
+  // plugins + themes
   kids.push(Group({
     children: [
-      ...pinnedRows(props),
       Row({ title: "Plugins", subtitle: plugins.length ? `${plugins.length} installed · ${on} enabled` : "Add extra functionality", chevron: true, onPress: () => go(props, "plugins", "Plugins") }),
       Row({ title: "Themes", subtitle: active ? `Active: ${readMeta("theme", active.id).name}` : themes.length ? "None active" : "Restyle Discord", chevron: true, onPress: () => go(props, "themes", "Themes") }),
     ],
@@ -169,11 +177,12 @@ function ManagerPage(props: any) {
 
   const rows = entries.map((e) => {
     const m = readMeta(kind, e.id);
-    const sub = [m.version && `v${m.version}`, m.author].filter(Boolean).join(" · ") || e.url;
+    const author = (m.author ?? "").trim();
+    const sub = m.version ? `v${m.version}` : author ? undefined : e.url;
     // Tap: info page (details, settings when the plugin has them, author). Swipe left: delete.
     const open = () => go(props, "info", m.name, { kind, id: e.id });
     return h(SwipeRow, { key: e.id, label: "Delete", onDelete: () => { remove(kind, e.id); bump(); } },
-      SwitchRow({ title: m.name, subtitle: sub, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open }));
+      SwitchRow({ title: m.name, subtitle: sub, extra: author ? h(AuthorChip, { name: author }) : undefined, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open }));
   });
 
   const kids: any[] = [];
@@ -259,9 +268,9 @@ function DeveloperPage(props: any) {
     title: "Client",
     children: [
       Row({
-        title: "Update client", accent: true, subtitle: `Installed: ${__HB_VERSION__}. Downloads the latest version.`,
-        onPress: () => updateClient().then(
-          () => alert("Client updated", "Restart Discord to use the new version.", [{ text: "Later", style: "cancel" }, { text: "Restart", onPress: doRestart }]),
+        title: "Update client", accent: true, subtitle: `Installed: ${__HB_VERSION__}. Downloads the latest client, then re-installs every plugin and theme from its link.`,
+        onPress: () => updateClient().then(() => updateAll()).then(
+          (r: { ok: number; failed: number }) => alert("Client updated", `${r.ok} plugin${r.ok === 1 ? "" : "s"} and theme${r.ok === 1 ? "" : "s"} updated${r.failed ? `, ${r.failed} could not be updated (check the log)` : ""}. Restart Discord to use the new versions.`, [{ text: "Later", style: "cancel" }, { text: "Restart", onPress: doRestart }]),
           (e: any) => alert("Update failed", String(e?.message ?? e))),
       }),
     ],

@@ -224,7 +224,7 @@ const open = (page, title) => mount(Sub, { navigation: nav, route: { params: { p
 // ===== 3. plugins page =====
 open("plugins", "Plugins");
 assert.deepEqual(navOpts.pop(), { title: "Plugins" }, "header title is set");
-assert.ok(has("Hello") && has("v1.0.0 · wvm"), "installed plugin listed with metadata");
+assert.ok(has("Hello") && has("v1.0.0") && texts(tree).includes("wvmuser") && !has("v1.0.0 ·"), "version, and the author as a small Discord credit (no wvm text next to the version)");
 await press("+");
 await type("https://…/my-plugin/", "https://x.test/p/");
 await press("Install");
@@ -268,7 +268,7 @@ open("plugins", "Plugins");
   assert.ok(has("Delete"), "red Delete button is there");
   await press("Delete");
   assert.ok(!reg().some((e) => e.id === "hello") && reg().some((e) => e.id === "cool-plug"), "swiping the first row and tapping Delete removes only that plugin");
-  assert.ok(!has("v1.0.0 · wvm"), "deleted plugin disappears from the list");
+  assert.ok(!has("v1.0.0"), "deleted plugin disappears from the list");
 }
 open("plugins", "Plugins");
 

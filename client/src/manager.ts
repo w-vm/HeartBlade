@@ -81,10 +81,13 @@ function resolveRel(base: string, rel: string): string {
   return m[1] + out.join("/");
 }
 
+// raw.githubusercontent.com answers from a ~5 minute cache; a throw-away query makes every download fresh.
+const fresh = (u: string) => (/^https?:\/\/raw\.githubusercontent\.com\//i.test(u) ? u + (u.includes("?") ? "&" : "?") + "hb=" + Date.now() : u);
+
 export function getText(url: string): Promise<string> {
   const f = (globalThis as any).fetch;
   if (typeof f !== "function") return Promise.reject(new Error("fetch is not available"));
-  return f(url, { headers: { "Cache-Control": "no-cache" } }).then((res: any) => {
+  return f(fresh(url), { headers: { "Cache-Control": "no-cache" } }).then((res: any) => {
     if (!res.ok) throw new Error(`HTTP ${res.status} from ${hostOf(url)}`);
     return res.text();
   }).then((t: string) => {
@@ -162,4 +165,24 @@ export function updateClient(): Promise<boolean> {
     markChanged();
     return true;
   });
+}
+
+/**
+ * Re-downloads every installed plugin and theme from the link it was installed with (used by "Update client").
+ * Enabled / disabled state and a plugin's saved data are kept; a theme is rewritten without changing which one is active.
+ */
+export function updateAll(): Promise<{ ok: number; failed: number }> {
+  const res = { ok: 0, failed: 0 };
+  let chain: Promise<void> = Promise.resolve();
+  for (const e of readRegistry()) {
+    const job = e.type === "plugin"
+      ? () => installPlugin(e.url).then(() => undefined)
+      : () => getText(e.url).then((t) => {
+        const th = JSON.parse(t);
+        if (!th || typeof th !== "object" || !(th.semanticColors || th.rawColors)) throw new Error("not a theme");
+        native.writeFile(`themes/${e.id}.json`, t);
+      });
+    chain = chain.then(job).then(() => { res.ok++; }, (err: any) => { res.failed++; log(`update failed for ${e.type} ${e.id}: ${String(err?.message ?? err)}`); });
+  }
+  return chain.then(() => { markChanged(); return res; });
 }
