@@ -81,6 +81,14 @@ function DiscordRow(props: { id?: string } | null) {
   });
 }
 
+/** Plugins whose manifest has "pinned": true get their own row on the HeartBlade page (opens their info + settings page). */
+function pinnedRows(props: any): any[] {
+  return listEntries("plugin").filter((e) => e.enabled && native.readJSON<any>(`plugins/${e.id}/manifest.json`, {})?.pinned).map((e) => {
+    const m = readMeta("plugin", e.id);
+    return Row({ title: m.name, subtitle: pluginSettings(e.id) ? "Open its settings" : "Not running, restart Discord", chevron: true, onPress: () => go(props, "info", m.name, { kind: "plugin", id: e.id }) });
+  });
+}
+
 function RootPage(props: any) {
   const { useState } = RX();
   const { View, Image } = RN(); const P = palette();
@@ -113,9 +121,10 @@ function RootPage(props: any) {
     ],
   }));
 
-  // plugins + themes
+  // plugins + themes (+ plugins that pin themselves here, like Account Manager)
   kids.push(Group({
     children: [
+      ...pinnedRows(props),
       Row({ title: "Plugins", subtitle: plugins.length ? `${plugins.length} installed · ${on} enabled` : "Add extra functionality", chevron: true, onPress: () => go(props, "plugins", "Plugins") }),
       Row({ title: "Themes", subtitle: active ? `Active: ${readMeta("theme", active.id).name}` : themes.length ? "None active" : "Restyle Discord", chevron: true, onPress: () => go(props, "themes", "Themes") }),
     ],

@@ -1,6 +1,6 @@
 {
   "name": "heartblade-client",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Heartblade JS runtime injected into Discord's Hermes engine",
   "scripts": {

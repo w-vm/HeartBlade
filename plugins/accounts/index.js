@@ -196,8 +196,8 @@ const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "1000000000000000001";
 const BOT_NAME = "HeartBlade";
-// Avatar of the /token reply: plugins/accounts/avatar.png in the repo (replace the file to change it).
-const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.png";
+// Avatar of the /token reply: the same gif as the banner on the HeartBlade page.
+const BOT_AVATAR = "https://heartunderblade.neocities.org/old_site/images/shinobu1.gif";
 
 const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
 const log = (m) => safe(() => hb.logger.log("[accounts] " + m));
@@ -486,7 +486,10 @@ function AccountsModalEntry() {
 
 // Adds the entry at the end of Discord's "Change Online Status" sheet (the sheet of your profile picture).
 function addToTree(node, depth) {
-  if (!node || typeof node !== "object" || !node.props) return null;
+  if (!node || typeof node !== "object") return null;
+  if (!node.props || Array.isArray(node)) {                       // unknown shape: show the entry below whatever the sheet renders
+    return depth === 0 ? R.createElement(R.Fragment, null, node, R.createElement(AccountsModalEntry, { key: "hb-account-manager" })) : null;
+  }
   const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
   const ch = node.props.children;
   if (depth === 0 && Array.isArray(ch)) {
@@ -508,7 +511,11 @@ function patchSheet(un, mod) {
   un.push(hb.patcher.after(mod, "default", (args, ret) => {
     try {
       const out = addToTree(ret, 0);
-      if (!sheetLogged) { sheetLogged = true; log(out ? "account sheet rendered, entry added" : "account sheet rendered but its layout was not recognised"); }
+      if (!sheetLogged) {
+        sheetLogged = true;
+        const ch = ret && ret.props && ret.props.children;
+        log((out ? "account sheet rendered, entry added" : "account sheet rendered but its layout was not recognised") + " [root=" + (ret && ret.type && (ret.type.displayName || ret.type.name) || typeof ret) + ", children=" + (Array.isArray(ch) ? "array(" + ch.length + ")" : typeof ch) + "]");
+      }
       return out || undefined;
     } catch (e) { return undefined; }
   }));
