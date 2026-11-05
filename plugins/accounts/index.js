@@ -1,4 +1,4 @@
-// Account Manager v0.3.1 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.2 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
