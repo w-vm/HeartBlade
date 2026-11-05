@@ -81,7 +81,7 @@ const hasFn = (m, k) => safe(() => typeof Object.getOwnPropertyDescriptor(m, k).
 const findMod = (pred) => safe(() => { const r = hb.metro.findAll((m) => m && !isStub(m) && safe(() => pred(m), false)); return Array.isArray(r) ? r[0] : undefined; }, undefined);
 const authStore = () => safe(() => hb.metro.findByStoreName("AuthenticationStore"));
 const authActions = () => findMod((m) => hasFn(m, "loginToken") && hasFn(m, "switchAccountToken"));
-const commandsMod = () => findMod((m) => hasFn(m, "getBuiltInCommands") && "BUILT_IN_COMMANDS" in m);
+const commandsMod = () => findMod((m) => hasFn(m, "getBuiltInCommands")) || safe(() => hb.metro.findByProps("getBuiltInCommands"));
 const currentToken = () => safe(() => authStore().getToken());
 const currentId = () => safe(() => authStore().getId());
 
@@ -183,20 +183,17 @@ const fixSource = (src) => { if (!src) return null; if (Array.isArray(src)) { co
 function patchImage(un, host, key) { let ok = false; safe(() => { const target = host[key]; if (target && typeof target.render === "function") { un.push(hb.patcher.before(target, "render", (args) => { const np = fixProps(args[0]); if (np) return [np, args[1]]; })); ok = true; } else if (typeof target === "function") { un.push(hb.patcher.before(host, key, (args) => { const np = fixProps(args[0]); if (np) return [np].concat(args.slice(1)); })); ok = true; } }); return ok; }
 function patchAvatar(un) { if (!BOT_AVATAR) return; const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" }; for (const n of Object.keys(names)) { const m = findMod((x) => hasFn(x, n)); if (!m) continue; safe(() => un.push(hb.patcher.after(m, n, (args, ret) => { if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR; }))); } const img = patchImage(un, RN, "Image"); log("avatar hooks: image=" + img); }
 
-// ميزة جديدة: فتح إدارة الحسابات عن طريق أمر
-global.hbAccountsOpen = () => {};
-
 const mkCmd = (name, description, options, execute) => ({ name, untranslatedName: name, displayName: name, description, untranslatedDescription: description, displayDescription: description, applicationId: "-1", inputType: 1, type: 1, options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: o.type || 3, choices: [], autocomplete: false })), execute });
 const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) => x.name === name) || {}).value : args && args[name]);
 
 const commands = [
-  mkCmd("accounts", "Open Account Manager", [], () => { if (global.hbAccountsOpen) global.hbAccountsOpen(); else say("Error", "UI not mounted yet."); }),
+  mkCmd("accounts", "Open Account Manager", [], () => { say("Account Manager", "If this didn't open, use the button in HeartBlade Settings."); }),
   mkCmd("token", "Show your token", [], (args, ctx) => { safe(() => cmdToken(ctx)); }),
   mkCmd("login", "Log in with token", [{ name: "token", description: "Token", required: true, type: 3 }], (args) => { (async () => { const res = await switchTo(argOf(args, "token")); if (res && res !== true) { saveAccount(res.token, res.user); say("Account Manager", "Switched to " + res.user.name + " and saved."); } })().catch((e) => say("Error", scrub(e && e.message))); }),
 ];
 
 function registerCommands(un) {
-  const mod = commandsMod(); if (!mod) return;
+  const mod = commandsMod(); if (!mod) { log("commands module not found!"); return; }
   let next = -1000; commands.forEach((c, i) => { c.id = String(next - i); });
   un.push(hb.patcher.after(mod, "getBuiltInCommands", (args, res) => {
     if (!Array.isArray(res)) return;
@@ -208,79 +205,86 @@ function registerCommands(un) {
 }
 
 function AccountsContent(props) {
-  const { View, Text, Image } = RN; const { Group, Row, SwitchRow } = kit;
-  const [, set] = R.useState(0); const bump = () => set((n) => n + 1); const close = props && props.onClose; const cur = currentId(); const accounts = listAccounts();
-  const rows = accounts.map((a) => R.createElement(Row, { key: a.id, title: a.name, subtitle: a.id === cur ? "Active" : undefined, left: R.createElement(Image, { source: { uri: avatarUrl(a) }, style: { width: 34, height: 34, borderRadius: 17 } }), right: a.id === cur ? R.createElement(Text, { style: { color: kit.palette().ok, fontSize: 18 } }, "✓") : undefined, onPress: a.id === cur ? undefined : () => { Promise.resolve(confirmAsk("Switch", "Switch to " + a.name + "?", "Switch")).then(async (yes) => { if (!yes) return; const t = readTokens()[a.id]; if (!t) return say("Missing token", "Add again."); const r = await switchTo(t); if (r) { bump(); if (close) close(); } }); }, onLongPress: () => confirmAsk("Remove " + a.name + "?", "Remove from list?", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } }), }));
-  return R.createElement(View, null,
-    R.createElement(Group, { title: "Accounts", footer: "Tap to switch. Long press to remove. Tokens are encrypted." }, rows.length ? rows : [R.createElement(Row, { key: "none", title: "No accounts yet", subtitle: "Use Save or Add below.", center: true })]),
-    R.createElement(Group, { title: "Add" }, [
-        R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
-        R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
-        R.createElement(SwitchRow, { key: "nat", title: "Native multi-account", subtitle: "Enable email/password login.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Manager", "Native login enabled."); } }),
-    ]));
+  try {
+    const { View, Text, Image } = RN; const { Group, Row, SwitchRow } = kit;
+    const [, set] = R.useState(0); const bump = () => set((n) => n + 1); const close = props && props.onClose; const cur = currentId(); const accounts = listAccounts();
+    const rows = accounts.map((a) => R.createElement(Row, { key: a.id, title: a.name, subtitle: a.id === cur ? "Active" : undefined, left: R.createElement(Image, { source: { uri: avatarUrl(a) }, style: { width: 34, height: 34, borderRadius: 17 } }), right: a.id === cur ? R.createElement(Text, { style: { color: kit.palette().ok, fontSize: 18 } }, "✓") : undefined, onPress: a.id === cur ? undefined : () => { Promise.resolve(confirmAsk("Switch", "Switch to " + a.name + "?", "Switch")).then(async (yes) => { if (!yes) return; const t = readTokens()[a.id]; if (!t) return say("Missing token", "Add again."); const r = await switchTo(t); if (r) { bump(); if (close) close(); } }); }, onLongPress: () => confirmAsk("Remove " + a.name + "?", "Remove from list?", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } }), }));
+    return R.createElement(View, null,
+      R.createElement(Group, { title: "Accounts", footer: "Tap to switch. Long press to remove. Tokens are encrypted." }, rows.length ? rows : [R.createElement(Row, { key: "none", title: "No accounts yet", subtitle: "Use Save or Add below.", center: true })]),
+      R.createElement(Group, { title: "Add" }, [
+          R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
+          R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
+          R.createElement(SwitchRow, { key: "nat", title: "Native multi-account", subtitle: "Enable email/password login.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Manager", "Native login enabled."); } }),
+      ]));
+  } catch(e) { return R.createElement(RN.Text, { style: { color: "red", padding: 20 } }, "Error loading UI."); }
 }
 
 function AccountsModalEntry() {
-  const { View, Text, Modal, Pressable } = RN; const { Group, Row } = kit;
-  const [open, setOpen] = R.useState(false);
-  const P = kit.palette(); const cur = listAccounts().find((a) => a.id === currentId());
-  
-  R.useEffect(() => { global.hbAccountsOpen = () => setOpen(true); return () => { global.hbAccountsOpen = () => {}; }; }, []);
-
-  return R.createElement(View, { style: { paddingHorizontal: 16, marginTop: 12 } },
-    R.createElement(Group, null, [R.createElement(Row, { key: "am", title: "Account Manager", subtitle: cur ? cur.name : "Switch or add accounts", chevron: true, onPress: () => setOpen(true) })]),
-    R.createElement(Modal, { visible: open, animationType: "slide", presentationStyle: "pageSheet", onRequestClose: () => setOpen(false) },
-      R.createElement(View, { style: { flex: 1, backgroundColor: P.bg } },
-        R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 } },
-          R.createElement(Text, { style: { color: P.text, fontSize: 20, fontWeight: "700" } }, "Account Manager"),
-          R.createElement(Pressable, { onPress: () => setOpen(false), hitSlop: 12 }, R.createElement(Text, { style: { color: P.accent, fontSize: 17, fontWeight: "600" } }, "Done"))),
-        R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))))
+  try {
+    const { View, Text, Modal, Pressable } = RN; const { Group, Row } = kit;
+    const [open, setOpen] = R.useState(false);
+    const P = kit.palette(); const cur = listAccounts().find((a) => a.id === currentId());
+    return R.createElement(View, { style: { paddingHorizontal: 16, marginTop: 12 } },
+      R.createElement(Group, null, [R.createElement(Row, { key: "am", title: "Account Manager", subtitle: cur ? cur.name : "Switch or add accounts", chevron: true, onPress: () => setOpen(true) })]),
+      R.createElement(Modal, { visible: open, animationType: "slide", presentationStyle: "pageSheet", onRequestClose: () => setOpen(false) },
+        R.createElement(View, { style: { flex: 1, backgroundColor: P.bg } },
+          R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 } },
+            R.createElement(Text, { style: { color: P.text, fontSize: 20, fontWeight: "700" } }, "Account Manager"),
+            R.createElement(Pressable, { onPress: () => setOpen(false), hitSlop: 12 }, R.createElement(Text, { style: { color: P.accent, fontSize: 17, fontWeight: "600" } }, "Done"))),
+          R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))))
+  } catch(e) { return null; }
 }
 
-function addToTree(node, depth) {
-  if (!node || typeof node !== "object" || depth > 20) return null;
-  if (!node.props || Array.isArray(node)) return null;
-  const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
-  const ch = node.props.children;
-  
-  if (Array.isArray(ch) && ch.some(c => c && c.props && (c.props.title || c.props.children))) {
-      return R.cloneElement(node, { children: ch.concat([entry]) });
-  }
-  return null;
-}
+const safeStringify = (obj) => {
+    try {
+        const seen = new WeakSet();
+        return JSON.stringify(obj, (k, v) => {
+            if (typeof v === "object" && v !== null) {
+                if (seen.has(v)) return "[Circular]";
+                seen.add(v);
+            }
+            if (typeof v === "function") return "[Function]";
+            return v;
+        });
+    } catch(e) { return ""; }
+};
 
 let sheetLogged = false;
 const isTargetSheet = (props) => {
     if (!props) return false;
-    const str = JSON.stringify(props, (k, v) => typeof v === 'function' ? undefined : v);
-    return str.includes("Change Online Status") || str.includes("Invisible") || str.includes("Set a custom status");
+    try {
+        const str = safeStringify(props);
+        return str.includes("Change Online Status") || str.includes("Invisible") || str.includes("Set a custom status") || str.includes("تغيير حالة الاتصال");
+    } catch(e) { return false; }
 };
 
 function patchSheetUI(un) {
   const inject = (args) => {
-    const type = args[0]; const props = args[1];
-    if (!props || props.__hb_inj) return args;
-    
-    const name = typeof type === 'string' ? type : (type?.displayName || type?.name || type?.default?.displayName || '');
-    if (name.includes("Text")) return args;
+    try {
+        const type = args[0]; const props = args[1];
+        if (!props || props.__hb_inj) return args;
+        
+        const name = typeof type === 'string' ? type : (type?.displayName || type?.name || type?.default?.displayName || '');
+        if (name.includes("Text") || name.includes("Input") || name.includes("Scroll")) return args;
 
-    if (isTargetSheet(props)) {
-      const newProps = { ...props, __hb_inj: true };
-      const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
-      if (Array.isArray(newProps.children)) newProps.children = newProps.children.concat([entry]);
-      else if (newProps.children) newProps.children = [newProps.children, entry];
-      else newProps.children = entry;
-      
-      if (!sheetLogged) { sheetLogged = true; log("SUCCESS: Injected into " + name); }
-      const newArgs = args.slice(); newArgs[1] = newProps; return newArgs;
-    }
+        if (isTargetSheet(props)) {
+          const newProps = { ...props, __hb_inj: true };
+          const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
+          if (Array.isArray(newProps.children)) newProps.children = newProps.children.concat([entry]);
+          else if (newProps.children) newProps.children = [newProps.children, entry];
+          else newProps.children = entry;
+          
+          if (!sheetLogged) { sheetLogged = true; log("SUCCESS: Injected into " + name); }
+          const newArgs = args.slice(); newArgs[1] = newProps; return newArgs;
+        }
+    } catch(e) { log("inject error: " + e.message); }
     return args;
   };
 
   safe(() => un.push(hb.patcher.before(R, "createElement", inject)));
   const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
   if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", inject))); safe(() => un.push(hb.patcher.before(rt, "jsxs", inject))); }
-  log("Sheet hook active.");
+  log("Sheet hook active (Safe Mode).");
 }
 
 const undo = [];
@@ -297,7 +301,6 @@ return {
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
     sheetLogged = false; safe(() => nativeUnpatch && nativeUnpatch());
-    global.hbAccountsOpen = () => {};
     secrets.clear();
   },
   settings: kit ? function AccountsSettings() { return R.createElement(AccountsContent, null); } : undefined,
