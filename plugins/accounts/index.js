@@ -61,11 +61,12 @@ const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "94945620787200001"; // snowflake date = 2015-09-20 (earliest year Discord allows) -> "Member Since"
 const BOT_NAME = "HeartBlade";
-const DEBUG = false; // shows a one-time alert with profile patch status; set false when done
+const DEBUG = true; // shows a one-time alert with profile patch status; set false when done
 const GOLD = "#F5D63D"; // Shinobu yellow (chat name color)
 const PROFILE_PRIMARY = 0xF5D63D; // profile theme colors (edit to match the gif)
 const PROFILE_SECONDARY = 0x8A6A12;
-const BOT_BIO = "Kakaka! Made by my master <@233320628235665408>.";
+const BOT_BIO = "Kakaka! Made by my master @u6oa\nhttps://discord.com/users/233320628235665408";
+const BIRTH_MS = Date.UTC(1407, 8, 20); // client-side spoof of "Member Since": Sep 20, 1407
 const BOT_BANNER = "https://images.steamusercontent.com/ugc/991240935447261386/12C1E71B9C0C1415ACBFF4263EA5855568BC62D4/?imw=1200&imh=1200&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false";
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
 
@@ -204,9 +205,27 @@ function patchProfile(un) {
       if (a && (a.id === BOT_ID || (ret.author && ret.author.id === BOT_ID))) return Object.assign({}, ret, { colorString: GOLD, nickname: BOT_NAME });
     })); authorHooks++; });
   }
-  const msg = "profile store: " + (st ? "found" : "NOT found") + ", hooks: " + hooked + ", banner modules: " + banners + ", author hooks: " + authorHooks;
+  const dateHooks = safe(() => patchBirthDate(un), 0);
+  const msg = "date hooks: " + dateHooks + ", profile store: " + (st ? "found" : "NOT found") + ", hooks: " + hooked + ", banner modules: " + banners + ", author hooks: " + authorHooks;
   log(msg);
   if (DEBUG) safe(() => setTimeout(() => say("HeartBlade debug", msg), 3000));
+}
+
+// ---------- client-side "Member Since" spoof ----------
+function patchBirthDate(un) {
+  const names = ["extractTimestamp", "getCreatedAtDate", "getCreatedAt", "extractCreatedAt"];
+  let n = 0;
+  const mods = safe(() => hb.metro.findAll((m) => m && !isStub(m) && names.some((k) => hasFn(m, k))), []) || [];
+  for (const m of mods) for (const k of names) {
+    if (!hasFn(m, k)) continue;
+    safe(() => { un.push(hb.patcher.after(m, k, (args, ret) => {
+      const a = args[0]; const id = a && typeof a === "object" ? a.id : a;
+      if (String(id) !== BOT_ID) return;
+      if (ret instanceof Date) return new Date(BIRTH_MS);
+      if (typeof ret === "number") return BIRTH_MS;
+    })); n++; });
+  }
+  return n;
 }
 
 let hbOpenAccounts = () => {};
