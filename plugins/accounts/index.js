@@ -511,30 +511,8 @@ function AccountsModalEntry() {
         R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))))
 }
 
-function addToTree(node, depth) {
-  if (!node || typeof node !== "object") return null;
-  if (!node.props || Array.isArray(node)) {
-    return depth === 0 ? R.createElement(R.Fragment, null, node, R.createElement(AccountsModalEntry, { key: "hb-account-manager" })) : null;
-  }
-  const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
-  const ch = node.props.children;
-  if (depth === 0 && Array.isArray(ch)) {
-    for (let i = ch.length - 1; i >= 0; i--) {
-      const c = ch[i];
-      if (c && typeof c === "object" && c.props && Array.isArray(c.props.children)) {
-        const inner = addToTree(c, 1); if (!inner) return null;
-        const copy = ch.slice(); copy[i] = inner;
-        return R.cloneElement(node, { children: copy });
-      }
-    }
-  }
-  return R.cloneElement(node, { children: Array.isArray(ch) ? ch.concat([entry]) : [ch, entry].filter(Boolean) });
-}
-
-let sheetPatched = false;
+// التعديلات الجديدة هنا: شفط الشاشة باستخدام createElement و jsx
 let sheetLogged = false;
-
-// التعديل هنا: إضافة الكلمات بالعربي والإنجليزي
 const SHEET_TITLES = [
   "Change Online Status", 
   "Set a custom status",
@@ -545,7 +523,6 @@ const SHEET_TITLES = [
   "حالة الاتصال"
 ];
 
-// التعديل هنا: دالة بحث محسنة تخش جوّا الـ props وتدور في defaultMessage
 const hasTitle = (node, depth) => {
   if (!node || depth > 30) return false;
   if (typeof node === "string") return SHEET_TITLES.some(t => node.toLowerCase().includes(t.toLowerCase()));
@@ -568,47 +545,49 @@ const hasTitle = (node, depth) => {
   return false;
 };
 
-const hasEntry = (node, depth) => {
-  if (!node || typeof node !== "object" || depth > 16) return false;
-  if (Array.isArray(node)) return node.some((c) => hasEntry(c, depth + 1));
-  if (node.key === "hb-account-manager") return true;
-  const p = node.props; return !!p && hasEntry(p.children, depth + 1);
-};
-const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : ""), "");
-let patched = new WeakSet();
-
-// التعديل هنا: البحث في الـ args كمان عشان نلقط النص لو جاي كـ Prop
-function wrapSheet(un, mod) {
-  if (!mod || patched.has(mod)) return;
-  patched.add(mod);
-  safe(() => un.push(hb.patcher.after(mod, "default", (args, ret) => {
-    try {
-      const matchInArgs = args && args.length > 0 && hasTitle(args[0], 0);
-      const matchInRet = ret && typeof ret === "object" && hasTitle(ret, 0);
-      if (!matchInArgs && !matchInRet) return undefined;
+function patchSheetUI(un) {
+  const inject = (args) => {
+    const type = args[0];
+    const props = args[1];
+    if (!props || props.__hb_sheet_injected) return args;
+    
+    // إذا لقينا النص في العنصر
+    if (hasTitle(props, 0)) {
+      // نتأكد إنه مو عنصر نص (عشان نلصق الزرار في الحاوية)
+      const isText = typeof type === "string" && type.includes("Text");
+      const isTextComp = type && (type.displayName === "Text" || type.name === "Text");
       
-      if (hasEntry(ret, 0)) return undefined;
-      const out = addToTree(ret, 0);
-      
-      if (!sheetLogged && out) {
-        sheetLogged = true;
-        const ch = ret.props && ret.props.children;
-        log("account entry added to " + fnName(mod) + " [root=" + ((ret.type && (ret.type.displayName || ret.type.name)) || typeof ret) + ", children=" + (Array.isArray(ch) ? "array(" + ch.length + ")" : typeof ch) + "]");
+      if (!isText && !isTextComp) {
+        const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
+        const newProps = { ...props, __hb_sheet_injected: true };
+        
+        if (Array.isArray(newProps.children)) {
+          newProps.children = newProps.children.concat([entry]);
+        } else if (newProps.children) {
+          newProps.children = [newProps.children, entry];
+        } else {
+          newProps.children = entry;
+        }
+        
+        if (!sheetLogged) {
+          sheetLogged = true;
+          log("account entry injected into sheet! (createElement + jsx)");
+        }
+        
+        const newArgs = args.slice();
+        newArgs[1] = newProps;
+        return newArgs;
       }
-      return out || undefined;
-    } catch (e) { return undefined; }
-  })));
-}
-const sheetLike = (m) => /Sheet|Modal|Action/i.test(fnName(m));
+    }
+    return args;
+  };
 
-function installSheet(un) {
-  let n = 0;
-  const found = safe(() => hb.metro.findAll((m) => m && !isStub(m) && sheetLike(m)), []);
-  (Array.isArray(found) ? found : []).slice(0, 500).forEach((m) => { n++; wrapSheet(un, m); });
-  sheetPatched = true;
-  const off = hb.metro.onModuleInit((id, ex) => { if (ex && !isStub(ex) && sheetLike(ex)) wrapSheet(un, ex); });
-  un.push(off);
-  log("account entry: watching " + n + " sheet components for the Online Status sheet");
+  safe(() => un.push(hb.patcher.before(R, "createElement", inject)));
+  const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
+  if (rt) { 
+    safe(() => un.push(hb.patcher.before(rt, "jsx", inject))); 
+    safe(() => un.push(hb.patcher.before(rt, "jsxs", inject))); 
+  }
 }
 
 const undo = [];
@@ -620,11 +599,16 @@ return {
     safe(() => patchCopyButton(undo));
     safe(() => patchAvatar(undo));
     safe(() => patchCopyLook(undo));
-    if (kit) safe(() => installSheet(undo)); else log("HeartBlade client too old for the account menu entry (Developer > Update client)");
+    if (kit) {
+      safe(() => patchSheetUI(undo));
+      log("account entry: watching sheet via createElement hooks");
+    } else {
+      log("HeartBlade client too old for the account menu entry (Developer > Update client)");
+    }
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    sheetPatched = false; sheetLogged = false; patched = new WeakSet();
+    sheetLogged = false;
     safe(() => nativeUnpatch && nativeUnpatch());
     secrets.clear();
   },
