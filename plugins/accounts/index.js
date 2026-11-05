@@ -1,4 +1,4 @@
-// Account Manager v0.2.4 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.2.5 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -139,10 +139,7 @@ function setNative(on) {
 // ---------- /token : plain ephemeral message (long-press -> Copy Text works) ----------
 const copyText = (text) => { RN.Clipboard.setString(text); setTimeout(async () => { try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {} }, CLIP_CLEAR_MS); };
 
-const SHINOBU_INTRO =
-  "Kakaka! Hmph, so thou hast come begging for thy key, master?\n" +
-  "Here it is, in the very next message. Hold it to copy it, and guard it as I guard my Mister Donut.\n" +
-  "Hand it to no soul, lest they wear thy face and thy name.";
+const SHINOBU_LINE = "Hand it to no soul, lest they wear thy face and speak in thy name.";
 
 function sendLocal(channelId, content) {
   const maker = findMod((m) => hasFn(m, "createBotMessage"));
@@ -160,7 +157,7 @@ function cmdToken(ctx) {
   const t = track(currentToken());
   const ch = safe(() => ctx.channel.id);
   if (!t) return say("Token", "Could not read token.");
-  const ok = ch && safe(() => sendLocal(ch, SHINOBU_INTRO) && sendLocal(ch, t), false);
+  const ok = ch && safe(() => sendLocal(ch, "||" + t + "||\n" + SHINOBU_LINE), false);
   if (!ok) { copyText(t); say("Token", "Copied (cleared after 60s)."); }
 }
 
