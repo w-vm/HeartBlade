@@ -1,4 +1,4 @@
-// Account Manager v0.3.3 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.4 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -65,7 +65,7 @@ const DEBUG = false; // shows a one-time alert with profile patch status; set fa
 const GOLD = "#F5D63D"; // Shinobu yellow (chat name color)
 const PROFILE_PRIMARY = 0xF5D63D; // profile theme colors (edit to match the gif)
 const PROFILE_SECONDARY = 0x8A6A12;
-const BOT_BIO = "Kakaka! Made by my master [@u6oa](https://discord.com/users/233320628235665408)";
+const BOT_BIO = "Kakaka! Made by my master [**@u6oa**](https://discord.com/users/233320628235665408)";
 const BIRTH_MS = Date.UTC(1407, 8, 29); // displays as Sep 20, 1407 (client formats pre-1582 dates in the Julian calendar, 9 days behind)
 const BOT_BANNER = "https://images.steamusercontent.com/ugc/991240935447261386/12C1E71B9C0C1415ACBFF4263EA5855568BC62D4/?imw=1200&imh=1200&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false";
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
