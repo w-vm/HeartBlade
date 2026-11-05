@@ -511,7 +511,7 @@ function AccountsModalEntry() {
         R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))))
 }
 
-// التعديلات الجديدة هنا: شفط الشاشة باستخدام createElement و jsx
+// التعديل الجديد: خطاف مباشر على إنشاء العناصر
 let sheetLogged = false;
 const SHEET_TITLES = [
   "Change Online Status", 
@@ -551,13 +551,9 @@ function patchSheetUI(un) {
     const props = args[1];
     if (!props || props.__hb_sheet_injected) return args;
     
-    // إذا لقينا النص في العنصر
     if (hasTitle(props, 0)) {
-      // نتأكد إنه مو عنصر نص (عشان نلصق الزرار في الحاوية)
-      const isText = typeof type === "string" && type.includes("Text");
-      const isTextComp = type && (type.displayName === "Text" || type.name === "Text");
-      
-      if (!isText && !isTextComp) {
+      const isText = type === RN.Text || (type && (type.displayName === "Text" || type.name === "Text"));
+      if (!isText) {
         const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
         const newProps = { ...props, __hb_sheet_injected: true };
         
@@ -571,7 +567,7 @@ function patchSheetUI(un) {
         
         if (!sheetLogged) {
           sheetLogged = true;
-          log("account entry injected into sheet! (createElement + jsx)");
+          log("SUCCESS: account entry injected into sheet! (NEW PATCH ACTIVE)");
         }
         
         const newArgs = args.slice();
@@ -588,6 +584,7 @@ function patchSheetUI(un) {
     safe(() => un.push(hb.patcher.before(rt, "jsx", inject))); 
     safe(() => un.push(hb.patcher.before(rt, "jsxs", inject))); 
   }
+  log("NEW PATCH ACTIVE - watching sheet via createElement hooks");
 }
 
 const undo = [];
@@ -601,7 +598,6 @@ return {
     safe(() => patchCopyLook(undo));
     if (kit) {
       safe(() => patchSheetUI(undo));
-      log("account entry: watching sheet via createElement hooks");
     } else {
       log("HeartBlade client too old for the account menu entry (Developer > Update client)");
     }
