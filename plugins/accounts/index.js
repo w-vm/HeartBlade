@@ -511,82 +511,61 @@ function AccountsModalEntry() {
         R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))))
 }
 
-// التعديل الجديد: خطاف مباشر على إنشاء العناصر مع تسجيل النصوص
 let sheetLogged = false;
-const SHEET_TITLES = [
-  "Change Online Status", 
-  "Set a custom status",
-  "Online Status",
-  "custom status",
-  "Invisible",
-  "Do Not Disturb",
-  "تغيير حالة الاتصال",
-  "تعيين حالة مخصصة",
-  "حالة الاتصال",
-  "غير مرئي"
-];
-
-const hasTitle = (node, depth) => {
-  if (!node || depth > 20) return false;
-  if (typeof node === "string") {
-    if (SHEET_TITLES.some(t => node.includes(t))) {
-      if (!sheetLogged) log("Found target string: " + node);
-      return true;
-    }
-    return false;
-  }
-  if (Array.isArray(node)) return node.some((c) => hasTitle(c, depth + 1));
-  if (typeof node !== "object") return false;
-
-  const p = node.props || node;
-
-  if (p.children && hasTitle(p.children, depth + 1)) return true;
-  if (p.title && typeof p.title === "string" && hasTitle(p.title, depth + 1)) return true;
-  if (p.label && typeof p.label === "string" && hasTitle(p.label, depth + 1)) return true;
-  
-  return false;
-};
-
-const hasEntry = (node, depth) => {
-  if (!node || typeof node !== "object" || depth > 20) return false;
-  if (Array.isArray(node)) return node.some((c) => hasEntry(c, depth + 1));
-  if (node.key === "hb-account-manager") return true;
-  const p = node.props || node;
-  if (p && p.children) return hasEntry(p.children, depth + 1);
-  return false;
+const safeStringify = (obj) => {
+    const seen = new WeakSet();
+    return JSON.stringify(obj, (key, value) => {
+        if (typeof value === "object" && value !== null) {
+            if (seen.has(value)) return "[Circular]";
+            seen.add(value);
+        }
+        return value;
+    });
 };
 
 function patchSheetUI(un) {
+  let debugCount = 0;
   const inject = (args) => {
     const type = args[0];
     const props = args[1];
     if (!props || props.__hb_sheet_injected) return args;
-    
-    const isText = type === RN.Text || (type && (type.displayName === "Text" || type.name === "Text"));
-    if (isText) return args;
 
-    if (hasTitle(props, 0)) {
-      if (hasEntry(props, 0)) return args;
+    let name = "";
+    if (typeof type === "string") name = type;
+    else if (type) name = type.displayName || type.name || type.default?.displayName || type.default?.name || "";
 
-      const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
-      const newProps = { ...props, __hb_sheet_injected: true };
-      
-      if (Array.isArray(newProps.children)) {
-        newProps.children = newProps.children.concat([entry]);
-      } else if (newProps.children) {
-        newProps.children = [newProps.children, entry];
-      } else {
-        newProps.children = entry;
-      }
-      
-      if (!sheetLogged) {
-        sheetLogged = true;
-        log("SUCCESS: account entry injected into sheet!");
-      }
-      
-      const newArgs = args.slice();
-      newArgs[1] = newProps;
-      return newArgs;
+    if (name === "Text" || name === "RCTText" || name === "TextInput") return args;
+
+    let match = false;
+    try {
+       const str = safeStringify(props);
+       if (str.includes("Change Online Status") || str.includes("Invisible") || str.includes("Do Not Disturb") || str.includes("custom status")) {
+           match = true;
+       }
+    } catch(e) {}
+
+    if (match) {
+       if (!props.__hb_sheet_injected) {
+           const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
+           const newProps = { ...props, __hb_sheet_injected: true };
+           
+           if (Array.isArray(newProps.children)) {
+             newProps.children = newProps.children.concat([entry]);
+           } else if (newProps.children) {
+             newProps.children = [newProps.children, entry];
+           } else {
+             newProps.children = entry;
+           }
+           
+           if (!sheetLogged) {
+             sheetLogged = true;
+             log(`SUCCESS: account entry injected into ${name}!`);
+           }
+           
+           const newArgs = args.slice();
+           newArgs[1] = newProps;
+           return newArgs;
+       }
     }
     return args;
   };
@@ -597,7 +576,7 @@ function patchSheetUI(un) {
     safe(() => un.push(hb.patcher.before(rt, "jsx", inject))); 
     safe(() => un.push(hb.patcher.before(rt, "jsxs", inject))); 
   }
-  log("NEW PATCH ACTIVE - watching sheet via createElement hooks");
+  log("BRUTE FORCE PATCH ACTIVE - searching strings");
 }
 
 const undo = [];
