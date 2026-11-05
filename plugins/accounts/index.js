@@ -1,4 +1,4 @@
-// Account Manager v0.2.9 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.0 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -62,9 +62,9 @@ const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "134808286003200001"; // snowflake date = 2016-01-08 (Kizumonogatari I premiere) -> "Member Since"
 const BOT_NAME = "HeartBlade";
 const DEBUG = true; // shows a one-time alert with profile patch status; set false when done
-const GOLD = "#F4DC8A"; // Shinobu blonde
-const PROFILE_PRIMARY = 0xF4DC8A; // profile theme colors (edit to match the gif)
-const PROFILE_SECONDARY = 0x6B4E1B;
+const GOLD = "#F5D63D"; // Shinobu yellow (chat name color)
+const PROFILE_PRIMARY = 0xF5D63D; // profile theme colors (edit to match the gif)
+const PROFILE_SECONDARY = 0x8A6A12;
 const BOT_BIO = "Kakaka! Forged by that master of mine, @u6oa.\nTouch not his key, mortal, lest I feast upon thee.";
 const BOT_BANNER = "https://images.steamusercontent.com/ugc/991240935447261386/12C1E71B9C0C1415ACBFF4263EA5855568BC62D4/?imw=1200&imh=1200&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false";
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
@@ -144,7 +144,7 @@ function setNative(on) {
 // ---------- /token : plain ephemeral message (long-press -> Copy Text works) ----------
 const copyText = (text) => { RN.Clipboard.setString(text); setTimeout(async () => { try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {} }, CLIP_CLEAR_MS); };
 
-const SHINOBU_LINE = "Hand it to no soul, lest they wear thy face and speak in thy name.";
+const SHINOBU_LINE = "Hand it to no soul, lest they wear thy face\nand speak in thy name.";
 
 function sendLocal(channelId, content) {
   const maker = findMod((m) => hasFn(m, "createBotMessage"));
@@ -152,6 +152,7 @@ function sendLocal(channelId, content) {
   if (!maker || !recv) return false;
   const msg = maker.createBotMessage({ channelId, content, embeds: [] });
   msg.colorString = GOLD;
+  msg.member = Object.assign({}, msg.member, { colorString: GOLD, nick: BOT_NAME });
   msg.flags = 64; // EPHEMERAL -> "Only you can see this message"
   msg.author = Object.assign({}, msg.author, { id: BOT_ID, username: BOT_NAME, globalName: BOT_NAME, global_name: BOT_NAME, avatar: "hb", discriminator: "0", bot: true });
   recv.receiveMessage(channelId, msg);
@@ -195,7 +196,15 @@ function patchProfile(un) {
       if (a && (a.id === BOT_ID || a.userId === BOT_ID)) return names[n] === "src" ? { uri: BOT_BANNER } : BOT_BANNER;
     })); banners++; });
   }
-  const msg = "profile store: " + (st ? "found" : "NOT found") + ", hooks: " + hooked + ", banner modules: " + banners;
+  let authorHooks = 0;
+  for (const n of ["getMessageAuthor", "useMessageAuthor", "getAuthor"]) {
+    const m = findMod((x) => hasFn(x, n)); if (!m) continue;
+    safe(() => { un.push(hb.patcher.after(m, n, (args, ret) => {
+      const a = ret && (ret.author || ret);
+      if (a && (a.id === BOT_ID || (ret.author && ret.author.id === BOT_ID))) return Object.assign({}, ret, { colorString: GOLD, nickname: BOT_NAME });
+    })); authorHooks++; });
+  }
+  const msg = "profile store: " + (st ? "found" : "NOT found") + ", hooks: " + hooked + ", banner modules: " + banners + ", author hooks: " + authorHooks;
   log(msg);
   if (DEBUG) safe(() => setTimeout(() => say("HeartBlade debug", msg), 3000));
 }
