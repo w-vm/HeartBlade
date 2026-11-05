@@ -533,19 +533,41 @@ function addToTree(node, depth) {
 
 let sheetPatched = false;
 let sheetLogged = false;
-const SHEET_TITLES = ["Change Online Status", "Set a custom status"];
+
+// التعديل هنا: إضافة الكلمات بالعربي والإنجليزي
+const SHEET_TITLES = [
+  "Change Online Status", 
+  "Set a custom status",
+  "Online Status",
+  "custom status",
+  "تغيير حالة الاتصال",
+  "تعيين حالة مخصصة",
+  "حالة الاتصال"
+];
+
+// التعديل هنا: دالة بحث محسنة تخش جوّا الـ props وتدور في defaultMessage
 const hasTitle = (node, depth) => {
-  if (!node || depth > 14) return false;
-  if (typeof node === "string") return SHEET_TITLES.indexOf(node) >= 0;
+  if (!node || depth > 30) return false;
+  if (typeof node === "string") return SHEET_TITLES.some(t => node.toLowerCase().includes(t.toLowerCase()));
   if (Array.isArray(node)) return node.some((c) => hasTitle(c, depth + 1));
-  const p = node.props; if (!p || typeof p !== "object") return false;
+  if (typeof node !== "object") return false;
+
+  const p = node.props || node;
+
+  if (p.defaultMessage && typeof p.defaultMessage === "string" && SHEET_TITLES.some(t => p.defaultMessage.toLowerCase().includes(t.toLowerCase()))) return true;
+
   for (const k in p) {
-    const v = p[k];
-    if (typeof v === "string") { if (SHEET_TITLES.indexOf(v) >= 0) return true; }
-    else if (v && typeof v === "object" && (k === "children" || Array.isArray(v) || v.props)) { if (hasTitle(v, depth + 1)) return true; }
+    if (typeof p[k] === "string" && SHEET_TITLES.some(t => p[k].toLowerCase().includes(t.toLowerCase()))) return true;
   }
+
+  if (p.children && hasTitle(p.children, depth + 1)) return true;
+  for (const k in p) {
+    if (k !== "children" && p[k] && typeof p[k] === "object" && hasTitle(p[k], depth + 1)) return true;
+  }
+
   return false;
 };
+
 const hasEntry = (node, depth) => {
   if (!node || typeof node !== "object" || depth > 16) return false;
   if (Array.isArray(node)) return node.some((c) => hasEntry(c, depth + 1));
@@ -554,14 +576,21 @@ const hasEntry = (node, depth) => {
 };
 const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : ""), "");
 let patched = new WeakSet();
+
+// التعديل هنا: البحث في الـ args كمان عشان نلقط النص لو جاي كـ Prop
 function wrapSheet(un, mod) {
   if (!mod || patched.has(mod)) return;
   patched.add(mod);
   safe(() => un.push(hb.patcher.after(mod, "default", (args, ret) => {
     try {
-      if (!ret || typeof ret !== "object" || !hasTitle(ret, 0) || hasEntry(ret, 0)) return undefined;
+      const matchInArgs = args && args.length > 0 && hasTitle(args[0], 0);
+      const matchInRet = ret && typeof ret === "object" && hasTitle(ret, 0);
+      if (!matchInArgs && !matchInRet) return undefined;
+      
+      if (hasEntry(ret, 0)) return undefined;
       const out = addToTree(ret, 0);
-      if (!sheetLogged) {
+      
+      if (!sheetLogged && out) {
         sheetLogged = true;
         const ch = ret.props && ret.props.children;
         log("account entry added to " + fnName(mod) + " [root=" + ((ret.type && (ret.type.displayName || ret.type.name)) || typeof ret) + ", children=" + (Array.isArray(ch) ? "array(" + ch.length + ")" : typeof ch) + "]");
@@ -570,7 +599,8 @@ function wrapSheet(un, mod) {
     } catch (e) { return undefined; }
   })));
 }
-const sheetLike = (m) => /Sheet/.test(fnName(m));
+const sheetLike = (m) => /Sheet|Modal|Action/i.test(fnName(m));
+
 function installSheet(un) {
   let n = 0;
   const found = safe(() => hb.metro.findAll((m) => m && !isStub(m) && sheetLike(m)), []);
