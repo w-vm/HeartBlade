@@ -1,64 +1,61 @@
-// HB Probe: read-only. Collects NAMES and TYPES only. Never reads values of
-// token-like properties and never calls getToken or any login function.
+// HB Probe v0.2: read-only. Reports NAMES/TYPES only. Never calls getToken or
+// any login function and never reads values of token-like properties.
 const lines = [];
 const out = (s) => { lines.push(s); try { hb.logger.log("[probe] " + s); } catch (e) {} };
-const safe = (fn, fallback) => { try { return fn(); } catch (e) { return fallback; } };
-const describe = (o, max) => {
-  if (o === null || o === undefined) return String(o);
-  const t = typeof o;
-  if (t !== "object" && t !== "function") return t;
-  const keys = safe(() => Object.keys(o), []).slice(0, max || 80);
-  return t + " {" + keys.map((k) => k + ":" + safe(() => typeof o[k], "?")).join(", ") + "}";
-};
-const BAD = /token|password|secret/i; // never touch values of these names
+const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
+const own = (o) => safe(() => Reflect.ownKeys(o).map(String), []);
+const typeOf = (o, k) => safe(() => typeof o[k], "throws");
 
-function probe() {
-  out("hb keys: " + describe(hb, 40));
-  for (const k of ["patcher", "metro", "storage", "logger", "flux", "ui"]) {
-    out("hb." + k + " = " + describe(hb[k], 60));
-  }
-  out("hb.ReactNative has Alert: " + safe(() => typeof hb.ReactNative.Alert.prompt, "no"));
-  out("hb.ReactNative has Clipboard: " + safe(() => typeof hb.ReactNative.Clipboard, "no"));
-  out("hb.ReactNative.NativeModules keys: " + safe(() => Object.keys(hb.ReactNative.NativeModules).join(","), "none"));
+function inspect(label, mod, names) {
+  if (mod === undefined || mod === null) { out(label + ": nothing"); return; }
+  const keys = own(mod);
+  const proto = safe(() => own(Object.getPrototypeOf(mod)), []);
+  out(label + ": typeof=" + typeof mod + " ownKeys=" + keys.length + " protoKeys=" + proto.length +
+    " names=" + names.map((n) => n + ":" + typeOf(mod, n)).join(","));
+  if (keys.length) out(label + " keys: " + keys.slice(0, 60).join(","));
+}
 
-  const accessors = ["findByProps", "byProps", "findProps", "find", "findByName", "findAll"];
-  out("metro accessors present: " + accessors.filter((a) => safe(() => typeof hb.metro[a] === "function", false)).join(","));
+function run() {
+  // 1) Negative control: a name that cannot exist. If this "finds" something,
+  //    findByProps returns a stub and its results are meaningless.
+  const ctl = safe(() => hb.metro.findByProps("zzNotARealProp9371"), "threw");
+  out("control findByProps(nonexistent) => " + (ctl === undefined ? "undefined" : ctl === null ? "null" : ctl === "threw" ? "threw" : typeof ctl + " ownKeys=" + own(ctl).length));
+  const ctl2 = safe(() => hb.metro.find((m) => m && m.zzNotARealProp9371 !== undefined), "threw");
+  out("control find(pred nonexistent) => " + (ctl2 === undefined ? "undefined" : ctl2 === null ? "null" : ctl2 === "threw" ? "threw" : typeof ctl2));
 
-  const find = (names) => {
-    for (const a of ["findByProps", "byProps", "findProps"]) {
-      if (safe(() => typeof hb.metro[a] === "function", false)) {
-        const r = safe(() => hb.metro[a](...names), undefined);
-        if (r) return { via: a, mod: r };
-      }
-    }
-    if (safe(() => typeof hb.metro.find === "function", false)) {
-      const r = safe(() => hb.metro.find((m) => m && names.every((n) => m[n] !== undefined)), undefined);
-      if (r) return { via: "find(pred)", mod: r };
-    }
-    return null;
-  };
-
+  // 2) Predicate search with strict typeof checks (real modules only).
   const wanted = [
-    ["getToken"], ["loginToken"], ["login", "logout"], ["switchAccount"],
-    ["registerCommand"], ["setString"], ["getCurrentUser"], ["getAccounts"],
-    ["multiAccountUsers"], ["getMultiAccountUsers"], ["addCommand"], ["pushScreen"], ["showToast"],
+    ["getToken"], ["loginToken"], ["login"], ["logout"], ["switchAccount"], ["registerCommand"],
+    ["getCurrentUser"], ["showToast"], ["pushScreen"], ["getMultiAccountUsers"], ["multiAccountUsers"], ["getAccounts"],
   ];
   for (const names of wanted) {
-    const r = find(names);
-    if (!r) { out("NOT FOUND: " + names.join("+")); continue; }
-    // Print key names and types only; skip any key that looks sensitive.
-    const keys = safe(() => Object.keys(r.mod), []).filter((k) => !BAD.test(k) || typeof r.mod[k] === "function");
-    out("FOUND " + names.join("+") + " via " + r.via + ": " +
-      keys.slice(0, 50).map((k) => k + ":" + safe(() => typeof r.mod[k], "?") + (safe(() => typeof r.mod[k] === "function", false) ? "/" + r.mod[k].length : "")).join(", "));
+    const m = safe(() => hb.metro.find((x) => x && names.every((n) => typeof x[n] === "function")), undefined);
+    inspect("find fn " + names.join("+"), m, names);
+  }
+
+  // 3) Store lookups (Discord stores are looked up by name).
+  for (const s of ["AuthenticationStore", "UserStore", "MultiAccountStore", "AccountStore", "SessionsStore"]) {
+    const m = safe(() => hb.metro.findByStoreName(s), undefined);
+    inspect("store " + s, m, ["getToken", "getCurrentUser", "getUsers", "getAccounts"]);
+  }
+
+  // 4) Clipboard + prompt availability.
+  const cb = safe(() => hb.ReactNative.Clipboard, undefined);
+  inspect("RN.Clipboard", cb, ["setString", "setStringAsync", "getString"]);
+  out("Alert.prompt: " + typeOf(safe(() => hb.ReactNative.Alert, {}), "prompt"));
+  out("RN keys: " + own(hb.ReactNative).slice(0, 80).join(","));
+
+  // 5) Command-related modules by name.
+  for (const n of ["CommandsStore", "ApplicationCommandStore", "ChatInputCommands"]) {
+    inspect("name " + n, safe(() => hb.metro.findByName(n), undefined), ["registerCommand", "getCommands"]);
   }
 }
 
 return {
   onLoad() {
-    try { probe(); } catch (e) { out("probe error: " + (e && e.message)); }
-    const text = lines.join("\n");
-    safe(() => hb.storage.set && hb.storage.set("probeReport", text));
-    safe(() => hb.ReactNative.Alert.alert("HB Probe", "Done (" + lines.length + " lines). Open HeartBlade > Developer > Copy debug report and send it."));
+    try { run(); } catch (e) { out("probe error: " + (e && e.message)); }
+    safe(() => hb.storage.set("probeReport", lines.join("\n")));
+    safe(() => hb.ReactNative.Alert.alert("HB Probe 0.2", "Done (" + lines.length + " lines). Developer > Copy debug report."));
   },
   onUnload() {},
 };
