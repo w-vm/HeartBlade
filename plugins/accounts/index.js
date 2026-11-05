@@ -1,4 +1,4 @@
-// Account Manager v0.2.8 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.2.9 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -60,7 +60,8 @@ const R = hb.React;
 const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "134808286003200001"; // snowflake date = 2016-01-08 (Kizumonogatari I premiere) -> "Member Since"
-const BOT_NAME = "Shinobu";
+const BOT_NAME = "HeartBlade";
+const DEBUG = true; // shows a one-time alert with profile patch status; set false when done
 const GOLD = "#F4DC8A"; // Shinobu blonde
 const PROFILE_PRIMARY = 0xF4DC8A; // profile theme colors (edit to match the gif)
 const PROFILE_SECONDARY = 0x6B4E1B;
@@ -175,26 +176,28 @@ function patchAvatar(un) { if (!BOT_AVATAR) return; const names = { getUserAvata
 
 // ---------- bot profile: banner + colors ----------
 function patchProfile(un) {
-  const store = safe(() => hb.metro.findByStoreName("UserProfileStore"));
-  if (store) {
-    for (const fn of ["getUserProfile", "getGuildMemberProfile"]) {
-      if (typeof store[fn] !== "function") continue; // store methods live on the prototype
-      log("profile patch: " + fn);
-      safe(() => un.push(hb.patcher.after(store, fn, (args, ret) => {
-        if (args[0] !== BOT_ID) return;
-        return Object.assign({}, ret || {}, { userId: BOT_ID, banner: "hb", accentColor: PROFILE_PRIMARY, themeColors: [PROFILE_PRIMARY, PROFILE_SECONDARY], bio: BOT_BIO });
-      })));
-    }
+  const st = safe(() => hb.metro.findByStoreName("UserProfileStore"));
+  const targets = []; if (st) { targets.push(st); const p = safe(() => Object.getPrototypeOf(st)); if (p && p !== Object.prototype) targets.push(p); }
+  let hooked = 0;
+  for (const t of targets) for (const fn of ["getUserProfile", "getGuildMemberProfile"]) {
+    if (typeof t[fn] !== "function") continue;
+    safe(() => { un.push(hb.patcher.after(t, fn, (args, ret) => {
+      if (args[0] !== BOT_ID) return;
+      return Object.assign({}, ret || {}, { userId: BOT_ID, banner: "hb", accentColor: PROFILE_PRIMARY, themeColors: [PROFILE_PRIMARY, PROFILE_SECONDARY], bio: BOT_BIO });
+    })); hooked++; });
   }
   const names = { getUserBannerURL: "url", getBannerURL: "url", getUserBannerSource: "src", getBannerSource: "src" };
+  let banners = 0;
   for (const n of Object.keys(names)) {
     const m = findMod((x) => hasFn(x, n)); if (!m) continue;
-    safe(() => un.push(hb.patcher.after(m, n, (args, ret) => {
+    safe(() => { un.push(hb.patcher.after(m, n, (args, ret) => {
       const a = args[0];
       if (a && (a.id === BOT_ID || a.userId === BOT_ID)) return names[n] === "src" ? { uri: BOT_BANNER } : BOT_BANNER;
-    })));
+    })); banners++; });
   }
-  log("profile hooks set");
+  const msg = "profile store: " + (st ? "found" : "NOT found") + ", hooks: " + hooked + ", banner modules: " + banners;
+  log(msg);
+  if (DEBUG) safe(() => setTimeout(() => say("HeartBlade debug", msg), 3000));
 }
 
 let hbOpenAccounts = () => {};
