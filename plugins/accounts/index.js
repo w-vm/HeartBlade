@@ -124,7 +124,6 @@ const Vault = (() => {
   function randomBytes(n) {
     const c = globalThis.crypto;
     if (!c || typeof c.getRandomValues !== "function") {
-      // Fail closed: never fall back to Math.random for key material.
       throw new Error("vault: no secure random source available");
     }
     const out = new Uint8Array(n);
@@ -172,7 +171,6 @@ const Vault = (() => {
     return utf8Decode(pt);
   }
 
-  // A random 256-bit key (made once, kept apart from the data) derives the cipher and MAC keys. No passphrase.
   function create(keyB64) {
     let key = keyB64 ? b64dec(keyB64) : randomBytes(32);
     const encKey = hmac(key, utf8Encode("hb-enc")), macKey = hmac(key, utf8Encode("hb-mac"));
@@ -186,10 +184,6 @@ const Vault = (() => {
   return { create };
 })();
 
-// ───────────────────────── Account Manager ─────────────────────────
-// Tokens never appear in any UI or log: the page shows only each account's name and avatar. Tokens are kept
-// encrypted (Vault above) and only ever sent to discord.com (to validate them / to switch accounts).
-
 const RN = hb.ReactNative;
 const R = hb.React;
 const API = "https://discord.com/api/v9";
@@ -197,7 +191,6 @@ const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "1000000000000000001";
 const BOT_NAME = "HeartBlade";
 const GOLD = "#E8C95A";
-// Avatar of the /token reply: the HeartBlade page gif, cropped to a square (plugins/accounts/avatar.gif, made by the Avatar workflow).
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
 
 const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
@@ -224,7 +217,6 @@ const confirmAsk = (title, msg, okLabel, destructive) => new Promise((resolve) =
   ]);
 });
 
-// ── Discord internals (lazy "$$loader" stubs are skipped) ──
 const isStub = (m) => safe(() => Object.prototype.hasOwnProperty.call(m, "$$loader") || Object.prototype.hasOwnProperty.call(m, "$$baseObject"), false);
 const hasFn = (m, k) => safe(() => typeof Object.getOwnPropertyDescriptor(m, k).value === "function", false);
 const findMod = (pred) => safe(() => { const r = hb.metro.findAll((m) => m && !isStub(m) && safe(() => pred(m), false)); return Array.isArray(r) ? r[0] : undefined; }, undefined);
@@ -234,7 +226,6 @@ const commandsMod = () => findMod((m) => hasFn(m, "getBuiltInCommands") && "BUIL
 const currentToken = () => safe(() => authStore().getToken());
 const currentId = () => safe(() => authStore().getId());
 
-// ── Storage: account list (names/avatars only) + encrypted tokens ──
 const store = {
   get: (k) => { const v = safe(() => hb.storage.get(k), undefined); return v === undefined ? null : v; },
   set: (k, v) => safe(() => hb.storage.set(k, v)),
@@ -261,7 +252,6 @@ const avatarUrl = (a) => a.avatar
   ? "https://cdn.discordapp.com/avatars/" + a.id + "/" + a.avatar + ".png?size=96"
   : "https://cdn.discordapp.com/embed/avatars/" + (Number(String(a.id).slice(-1)) % 5) + ".png";
 
-// ── Token validation (asks discord.com whether the token works) ──
 async function validateToken(raw) {
   const token = String(raw || "").trim().replace(/^"|"$/g, "");
   if (!token || /\s/.test(token) || token.length < 20 || token.length > 200) return { ok: false, reason: "That doesn't look like a Discord token." };
@@ -311,7 +301,6 @@ async function saveCurrent() {
   return true;
 }
 
-// ── Discord's own multi-account UI (the "Add account" button with Discord's login screen) ──
 let nativeUnpatch = null;
 function setNative(on) {
   safe(() => { nativeUnpatch && nativeUnpatch(); }); nativeUnpatch = null;
@@ -330,7 +319,6 @@ function setNative(on) {
   nativeUnpatch = () => un.forEach((f) => safe(f));
 }
 
-// ── Local "bot" reply (only you can see it; nothing is sent to anyone) ──
 const copyText = (text) => {
   RN.Clipboard.setString(text);
   setTimeout(async () => { try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {} }, CLIP_CLEAR_MS);
@@ -342,7 +330,7 @@ function sendLocal(channelId, content, withCopy) {
   const embed = { type: "rich", description: content, rawDescription: content, color: 0xE8C95A };
   const msg = maker.createBotMessage({ channelId, content: "", embeds: [embed] });
   msg.colorString = GOLD;
-  msg.flags = 0;                  // not "ephemeral": that style adds Discord's blue bar on the left of the message
+  msg.flags = 0;
   msg.author = Object.assign({}, msg.author, { id: BOT_ID, username: BOT_NAME, globalName: BOT_NAME, global_name: BOT_NAME, avatar: "hb", discriminator: "0", bot: true });
   if (withCopy) msg.components = [{ type: 1, components: [{ type: 2, style: 1, label: "Copy", custom_id: "hb-copy:token" }] }];
   recv.receiveMessage(channelId, msg);
@@ -357,7 +345,6 @@ function cmdToken(ctx) {
   if (!ok) { copyText(t); say("Token", "Copied to your clipboard (cleared after 60 seconds)."); }
 }
 
-// Makes the Copy button of the reply work locally instead of sending an interaction to Discord.
 function patchCopyButton(un) {
   const m = findMod((x) => hasFn(x, "executeMessageComponentInteraction"));
   if (!m) { log("component handler not found (Copy button falls back to long-press)"); return; }
@@ -367,8 +354,6 @@ function patchCopyButton(un) {
     const t = currentToken(); if (t) { copyText(t); say("Token", "Copied. The clipboard is cleared after 60 seconds."); }
   }));
 }
-// Yellow Copy button. Discord only has blue / grey / green / red buttons, so the message's Copy button is swapped for our own
-// (same place, gold) the moment Discord creates it. If Discord builds it differently, the normal button stays and still works.
 function CopyButton() {
   const { Pressable, Text } = RN;
   return R.createElement(Pressable, {
@@ -394,18 +379,16 @@ function holdsCopy(type, props) {
 }
 let copyHits = 0;
 function patchCopyLook(un) {
-  const ce = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped (createElement)"); copyHits++; return [CopyButton, args[1] && args[1].key != null ? { key: args[1].key } : {}]; } };
-  const jx = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped (jsx)"); copyHits++; return [CopyButton, {}].concat(args.slice(2)); } };
+  const ce = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped (createElement)"); copyHits++; return [CopyButton, args[1] && args[1].key != null ? { key: args[1].key } : {}]; } return args; };
+  const jx = (args) => { if (holdsCopy(args[0], args[1])) { if (!copyHits) log("copy button swapped (jsx)"); copyHits++; return [CopyButton, {}].concat(args.slice(2)); } return args; };
   safe(() => un.push(hb.patcher.before(R, "createElement", ce)));
   const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
   if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", jx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", jx))); }
   log("copy button look hooked (createElement" + (rt ? " + jsx" : "") + ")");
 }
 
-// Bot avatar for the reply. Discord builds the avatar URL from the author's avatar hash, which does not exist for our local
-// bot, so the URL is fixed in three places: the URL helpers, and (the part that always works) the Image component itself.
 const isBotUri = (u) => typeof u === "string" && u.indexOf(BOT_ID) !== -1 && u.indexOf(BOT_AVATAR) === -1;
-const fixProps = (p) => {            // fixed avatar source, and "cover" so the banner shaped gif is cropped, not squashed
+const fixProps = (p) => {
   const s = p && fixSource(p.source); if (!s) return null;
   return Object.assign({}, p, { source: s, resizeMode: "cover", style: [p.style, { resizeMode: "cover" }] });
 };
@@ -418,13 +401,13 @@ function patchImage(un, host, key) {
   let ok = false;
   safe(() => {
     const target = host[key];
-    if (target && typeof target.render === "function") {            // forwardRef component (React Native >= 0.72)
+    if (target && typeof target.render === "function") {
       un.push(hb.patcher.before(target, "render", (args) => {
         const np = fixProps(args[0]);
         if (np) return [np, args[1]];
       }));
       ok = true;
-    } else if (typeof target === "function") {                        // plain function component
+    } else if (typeof target === "function") {
       un.push(hb.patcher.before(host, key, (args) => {
         const np = fixProps(args[0]);
         if (np) return [np].concat(args.slice(1));
@@ -447,18 +430,17 @@ function patchAvatar(un) {
   log("avatar hooks: image=" + img);
 }
 
-// ── Slash commands: /token and /login ──
 const mkCmd = (name, description, options, execute) => ({
   name, untranslatedName: name, displayName: name,
   description, untranslatedDescription: description, displayDescription: description,
   applicationId: "-1", inputType: 1, type: 1,
-  options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: 3 })),
+  options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: o.type || 3, choices: [], autocomplete: false })),
   execute,
 });
 const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) => x.name === name) || {}).value : args && args[name]);
 const commands = [
   mkCmd("token", "Show your token privately (only you see it) with a Copy button", [], (args, ctx) => { safe(() => cmdToken(ctx)); }),
-  mkCmd("login", "Log into an account with its token (it is saved to Account Manager)", [{ name: "token", description: "Account token", required: true }],
+  mkCmd("login", "Log into an account with its token (it is saved to Account Manager)", [{ name: "token", description: "Account token", required: true, type: 3 }],
     (args) => { (async () => {
       const res = await switchTo(argOf(args, "token"));
       if (res && res !== true) { saveAccount(res.token, res.user); say("Account Manager", "Switched to " + res.user.name + " and saved it."); }
@@ -469,7 +451,6 @@ function registerCommands(un) {
   if (!mod) { log("commands module not found"); return; }
   let next = -1000;
   commands.forEach((c, i) => { c.id = String(next - i); });
-  // Same method as Rain: append to the result of getBuiltInCommands (and nothing else, otherwise commands show twice).
   un.push(hb.patcher.after(mod, "getBuiltInCommands", (args, res) => {
     if (!Array.isArray(res)) return;
     const t = args[0];
@@ -479,7 +460,6 @@ function registerCommands(un) {
   log("commands registered: " + commands.map((c) => "/" + c.name).join(", "));
 }
 
-// ── UI (HeartBlade page + the button inside Discord's account sheet) ──
 function AccountsContent(props) {
   const { View, Text, Image } = RN; const { Group, Row, SwitchRow } = kit;
   const [, set] = R.useState(0); const bump = () => set((n) => n + 1);
@@ -508,7 +488,7 @@ function AccountsContent(props) {
       [
         R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
         R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
-        R.createElement(SwitchRow, { key: "nat", title: "Discord's own login (email & password)", subtitle: "Turns on Discord's built-in \"Add account\" in the account menu, so you can sign in with email and password on Discord's own screen.", on: !!store.get("native"), onChange: (v) => { setNative(v); bump(); } }),
+        R.createElement(SwitchRow, { key: "nat", title: "Discord's own login (email & password)", subtitle: "Turns on Discord's built-in \"Add account\" flow so you can add another account without signing out.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Account Manager", "Discord's own add-account flow is enabled."); } }),
       ]));
 }
 
@@ -524,13 +504,12 @@ function AccountsModalEntry() {
         R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 } },
           R.createElement(Text, { style: { color: P.text, fontSize: 20, fontWeight: "700" } }, "Account Manager"),
           R.createElement(Pressable, { onPress: () => setOpen(false), hitSlop: 12 }, R.createElement(Text, { style: { color: P.accent, fontSize: 17, fontWeight: "600" } }, "Done"))),
-        R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))));
+        R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))))
 }
 
-// Adds the entry at the end of Discord's "Change Online Status" sheet (the sheet of your profile picture).
 function addToTree(node, depth) {
   if (!node || typeof node !== "object") return null;
-  if (!node.props || Array.isArray(node)) {                       // unknown shape: show the entry below whatever the sheet renders
+  if (!node.props || Array.isArray(node)) {
     return depth === 0 ? R.createElement(R.Fragment, null, node, R.createElement(AccountsModalEntry, { key: "hb-account-manager" })) : null;
   }
   const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
@@ -547,20 +526,40 @@ function addToTree(node, depth) {
   }
   return R.cloneElement(node, { children: Array.isArray(ch) ? ch.concat([entry]) : [ch, entry].filter(Boolean) });
 }
+
 let sheetPatched = false;
 let sheetLogged = false;
-// The entry goes at the bottom of the "Change Online Status" sheet (profile picture). That sheet is found by what it shows
-// (its title text), not by a component name, so it keeps working when a build renames things.
-const SHEET_TITLES = ["Change Online Status", "Set a custom status"];
+const SHEET_TITLES = ["Change Online Status", "Set a custom status", "Online Status", "Status"];
+const textOf = (node, out = []) => {
+  if (!node) return out;
+  if (typeof node === "string") out.push(node);
+  else if (Array.isArray(node)) node.forEach((n) => textOf(n, out));
+  else if (node && typeof node === "object") {
+    const p = node.props || {};
+    if (typeof p.title === "string") out.push(p.title);
+    if (typeof p.label === "string") out.push(p.label);
+    if (typeof p.accessibilityLabel === "string") out.push(p.accessibilityLabel);
+    if (typeof p.text === "string") out.push(p.text);
+    if (p.children) textOf(p.children, out);
+  }
+  return out;
+};
 const hasTitle = (node, depth) => {
-  if (!node || depth > 14) return false;
-  if (typeof node === "string") return SHEET_TITLES.indexOf(node) >= 0;
+  if (!node || depth > 18) return false;
+  const texts = textOf(node);
+  for (const txt of texts) {
+    if (typeof txt !== "string") continue;
+    const normalized = txt.trim();
+    if (!normalized) continue;
+    if (SHEET_TITLES.some((t) => t === normalized || normalized.includes(t) || t.includes(normalized))) return true;
+  }
   if (Array.isArray(node)) return node.some((c) => hasTitle(c, depth + 1));
-  const p = node.props; if (!p || typeof p !== "object") return false;
-  for (const k in p) {
-    const v = p[k];
-    if (typeof v === "string") { if (SHEET_TITLES.indexOf(v) >= 0) return true; }
-    else if (v && typeof v === "object" && (k === "children" || Array.isArray(v) || v.props)) { if (hasTitle(v, depth + 1)) return true; }
+  if (node && typeof node === "object") {
+    const p = node.props;
+    if (p && typeof p === "object") {
+      if (p.children && hasTitle(p.children, depth + 1)) return true;
+      if (Array.isArray(p.children) && p.children.some((c) => hasTitle(c, depth + 1))) return true;
+    }
   }
   return false;
 };
@@ -570,25 +569,26 @@ const hasEntry = (node, depth) => {
   if (node.key === "hb-account-manager") return true;
   const p = node.props; return !!p && hasEntry(p.children, depth + 1);
 };
-const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : ""), "");
+const fnName = (m) => safe(() => (typeof m.default === "function" ? (m.default.displayName || m.default.name || "") : (m.displayName || m.name || "")), "");
 let patched = new WeakSet();
 function wrapSheet(un, mod) {
   if (!mod || patched.has(mod)) return;
   patched.add(mod);
-  safe(() => un.push(hb.patcher.after(mod, "default", (args, ret) => {
+  const apply = (ret) => {
     try {
       if (!ret || typeof ret !== "object" || !hasTitle(ret, 0) || hasEntry(ret, 0)) return undefined;
       const out = addToTree(ret, 0);
       if (!sheetLogged) {
         sheetLogged = true;
-        const ch = ret.props && ret.props.children;
-        log("account entry added to " + fnName(mod) + " [root=" + ((ret.type && (ret.type.displayName || ret.type.name)) || typeof ret) + ", children=" + (Array.isArray(ch) ? "array(" + ch.length + ")" : typeof ch) + "]");
+        log("account entry added to " + fnName(mod));
       }
       return out || undefined;
     } catch (e) { return undefined; }
-  })));
+  };
+  safe(() => un.push(hb.patcher.after(mod, "default", (args, ret) => apply(ret))));
+  safe(() => un.push(hb.patcher.after(mod, "render", (args, ret) => apply(ret))));
 }
-const sheetLike = (m) => /Sheet/.test(fnName(m));
+const sheetLike = (m) => /Sheet|Status|Profile/i.test(fnName(m) || "") || /Sheet|Status|Profile/i.test(String(m && (m.displayName || m.name || "")));
 function installSheet(un) {
   let n = 0;
   const found = safe(() => hb.metro.findAll((m) => m && !isStub(m) && sheetLike(m)), []);
@@ -612,7 +612,7 @@ return {
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    sheetPatched = false; sheetLogged = false; patched = new WeakSet();      // so turning the plugin back on installs the entry again
+    sheetPatched = false; sheetLogged = false; patched = new WeakSet();
     safe(() => nativeUnpatch && nativeUnpatch());
     secrets.clear();
   },
