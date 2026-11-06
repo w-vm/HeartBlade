@@ -359,20 +359,9 @@ function dumpAddFlow() {
 
 // Discord's navigation module (pushModal / getOpenModalKey / resetToAuthRoute) and the key of its login modal, found with the log dump.
 async function openLoginViaNav() {
-  const nav = findMod((m) => hasFn(m, "pushModal") && hasFn(m, "getOpenModalKey"));
-  const keys = findMod((m) => safe(() => typeof m.MULTI_ACCOUNT_LOGIN_MODAL_KEY === "string", false));
-  if (!nav || !keys) { log("login modal: navigation module " + (nav ? "ok" : "missing") + ", key module " + (keys ? "ok" : "missing")); return false; }
-  const K = keys.MULTI_ACCOUNT_LOGIN_MODAL_KEY;
-  // The exact argument of pushModal is not known, so each shape is tried and verified (the open modal key must become K).
-  const shapes = [{ key: K }, { name: K }, { key: K, params: {} }, { key: K, modal: { key: K } }];
-  for (let i = 0; i < shapes.length; i++) {
-    try { nav.pushModal(shapes[i]); } catch (e) { log("login modal shape " + i + " threw: " + (e && e.message)); continue; }
-    await sleep(600);
-    const open = safe(() => nav.getOpenModalKey(), null);
-    log("login modal shape " + i + " -> open key: " + String(open));
-    if (open === K) return true;
-    if (open) safe(() => nav.popModal());
-  }
+  const nav = findMod((m) => hasFn(m, "resetToAuthRoute") && hasFn(m, "getOpenModalKey"));
+  if (!nav) { log("login: navigation module missing"); return false; }
+  // pushModal is NOT called with guessed arguments: a wrong shape registers a screen without a component and crashes the app.
   // Last resort: Discord's own login screen (your current account is saved first and stays logged in).
   if (hasFn(nav, "resetToAuthRoute")) {
     const yes = await confirmAsk("Add account", "Open Discord's login screen? Your current account stays saved here. Log in with the new account, then switch back from Account Manager any time.", "Open login");
