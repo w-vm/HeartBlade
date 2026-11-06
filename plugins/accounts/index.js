@@ -1,4 +1,4 @@
-// Account Manager v0.3.9 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.10 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -170,17 +170,23 @@ function sendLocal(channelId, content, withButton) {
 // Copy button inside the /token message. Pressing it makes Discord send a component interaction to its REST API;
 // that call is caught here (nothing is sent to the server) and the token is copied instead (clipboard cleared after 60s).
 function hookCopyButton(un) {
-  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
-  if (!http) { log("copy button: REST module not found"); return; }
-  const isCopy = (a) => safe(() => { const o = a && a[0]; const b = o && (o.body || o.data); return !!b && (JSON.stringify(b).indexOf(COPY_ID) !== -1); }, false);
-  safe(() => un.push(hb.patcher.instead(http, "post", (args, orig) => {
+  const isCopy = (a) => safe(() => safeStringify(a).indexOf(COPY_ID) !== -1, false);
+  const onCopy = () => { const t = currentToken(); if (t) copyText(t); };
+  let hooked = 0;
+  // 1) Discord's own handler for a pressed message button: swallow our button before it reaches the server.
+  const exec = findMod((m) => hasFn(m, "executeMessageComponentInteraction"));
+  if (exec) safe(() => { un.push(hb.patcher.instead(exec, "executeMessageComponentInteraction", (args, orig) => {
     if (!isCopy(args)) return orig(...args);
-    const t = currentToken();
-    if (t) copyText(t);
-    return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
-  })));
-  copyHooked = true;
-  log("copy button hook active");
+    onCopy(); return Promise.resolve();
+  })); hooked++; });
+  // 2) The REST call itself, in case the press reaches it by another route.
+  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
+  if (http) safe(() => { un.push(hb.patcher.instead(http, "post", (args, orig) => {
+    if (!isCopy(args)) return orig(...args);
+    onCopy(); return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
+  })); hooked++; });
+  copyHooked = hooked > 0;
+  log("copy button hooks: " + hooked + (exec ? " (component handler found)" : " (component handler NOT found)"));
 }
 
 // Fallback when the button cannot be hooked: a plain alert with a Copy button.

@@ -265,11 +265,12 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   if (!Animated || !PanResponder) return p.children;
   if (!x.current) { x.current = new Animated.Value(0); try { x.current.addListener?.((e: any) => { pos.current = e.value; }); } catch { /* ignore */ } }
 
-  const settle = (to: number) => {
+  const settle = (to: number, velocity = 0) => {
     opened.current = to !== 0; setOpen(to !== 0);
     if (to !== 0) { if (closeOpenRow && closeOpenRow !== closer.current) closeOpenRow(); closeOpenRow = closer.current; }
     else if (closeOpenRow === closer.current) closeOpenRow = null;
-    try { Animated.spring(x.current, { toValue: to, useNativeDriver: true, bounciness: 0, speed: 20 }).start(); } catch { x.current.setValue(to); pos.current = to; }
+    // JS driver on purpose: with the native driver the value Discord reads back mid-animation can be stale, which made the next drag start from the wrong place.
+    try { Animated.spring(x.current, { toValue: to, velocity, useNativeDriver: false, bounciness: 0, speed: 16 }).start(); } catch { x.current.setValue(to); pos.current = to; }
   };
   const closer = useRef(null as any);
   closer.current = () => settle(0);
@@ -278,7 +279,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   if (!responder.current) {
     const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
     // The row can follow the finger all the way to the left, but never goes right of its resting place.
-    const band = (v: number) => (v > 0 ? 0 : v);
+    const band = (v: number) => Math.max(-(width.current || 4000), Math.min(0, v));
     const full = () => Math.max(W * 2, width.current * 0.5);
     responder.current = PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -295,9 +296,9 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
       onPanResponderRelease: (_e: any, g: any) => {
         lockScroll(false);
         const at = start.current + g.dx;
-        if (at < -full()) { settle(-W); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
+        if (at < -full()) { settle(-W, g.vx); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
         const open = g.vx < -0.35 ? true : g.vx > 0.35 ? false : at < -W / 2;
-        settle(open ? -W : 0);
+        settle(open ? -W : 0, g.vx);
       },
       onPanResponderTerminate: () => { lockScroll(false); settle(opened.current ? -W : 0); },
     });
