@@ -218,9 +218,29 @@ function entryByText(first) {
 function patchText(un) {
   const RN = hb.ReactNative; const T = safe(() => RN.Text, null);
   const holder = !T ? null : typeof T.render === "function" ? T : (T.type && typeof T.type.render === "function" ? T.type : null);
-  if (!holder) { log("text hook: RN.Text has no render function (" + describe(T && Object.keys(T)) + "), notes are not coloured or tappable"); return; }
-  un.push(hb.patcher.before(holder, "render", (args) => { try { return textHook(args); } catch (e) { once("err", "text hook error: " + (e && e.message)); } }));
-  log("text hook on");
+  if (holder) {
+    un.push(hb.patcher.before(holder, "render", (args) => { try { return textHook(args); } catch (e) { once("err", "text hook error: " + (e && e.message)); } }));
+    log("text hook on (render)");
+    return;
+  }
+  // In this Discord version RN.Text is a plain function component, so it cannot be patched in place.
+  // Instead the Text export of the react-native module is replaced by a thin wrapper that adjusts the props of our notes.
+  if (typeof T !== "function") { log("text hook: RN.Text has an unknown shape (" + describe(T && Object.keys(T)) + "), notes are not coloured or tappable"); return; }
+  const Orig = T;
+  const isClass = !!(Orig.prototype && Orig.prototype.isReactComponent);
+  const HBText = function HBText(props) {
+    let np = props;
+    try { const r = textHook([props]); if (r && r[0]) np = r[0]; } catch (e) { once("err", "text hook error: " + (e && e.message)); }
+    return isClass ? R.createElement(Orig, np) : Orig(np);
+  };
+  try { Object.assign(HBText, Orig); } catch (e) {}
+  HBText.displayName = Orig.displayName || "Text";
+  const desc = Object.getOwnPropertyDescriptor(RN, "Text");
+  try {
+    Object.defineProperty(RN, "Text", { configurable: true, enumerable: true, get: () => HBText });
+    un.push(() => { safe(() => { if (desc) Object.defineProperty(RN, "Text", desc); else delete RN.Text; }); });
+    log("text hook on (react-native Text export replaced; was " + (desc ? ("get" in desc && desc.get ? "getter" : "value") : "inherited") + ")");
+  } catch (e) { log("text hook: could not replace RN.Text: " + (e && e.message)); }
 }
 function textHook(args) {
   {
