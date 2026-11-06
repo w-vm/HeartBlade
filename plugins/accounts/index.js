@@ -1,4 +1,4 @@
-// Account Manager v0.4.4 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.5.5 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -361,6 +361,20 @@ function dumpAddFlow() {
 // This Discord build has no "add account" screen, so "+" does what you did by hand, safely:
 // 1) the current account's token is saved (encrypted), 2) Discord logs out locally, but the logout request to the server is held back,
 // so the saved token stays valid, 3) Discord's own login screen opens, 4) the account you log into is saved automatically (see watchLogins).
+let pendingOld = null;      // the account we left; checked once the new login is saved, to prove its token survived
+async function waitLoggedOut(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (!safe(() => currentToken(), null)) return true; await sleep(250); }
+  return !safe(() => currentToken(), null);
+}
+async function checkOldAccount() {
+  const p = pendingOld; if (!p || currentId() === p.id) return;
+  pendingOld = null;
+  const v = await validateToken(p.token);
+  log("add account: the previous account's saved login is " + (v.ok ? "still valid" : "NOT valid (" + v.reason + ")"));
+  if (!v.ok) say("Add account", "The previous account's saved login no longer works (Discord ended that session). Add it again with /login or its token.");
+}
+
 async function startAddAccount() {
   const auth = findMod((m) => hasFn(m, "logout") && hasFn(m, "switchAccountToken"));
   const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
@@ -369,6 +383,7 @@ async function startAddAccount() {
   const yes = await confirmAsk("Add account", "Your current account is saved first. Discord's login screen opens now: log in with the other account and it is saved here automatically. Switch between them any time from Account Manager.", "Continue");
   if (!yes) return true;
   if (store.get("native")) setNative(false);                 // the multi-account patch is not needed here
+  const oldToken = track(currentToken()), oldId = currentId();
   let hold = true;
   const release = hb.patcher.instead(http, "post", (args, orig) => {
     if (hold && safe(() => safeStringify(args[0]).indexOf("/auth/logout") !== -1, false)) {
@@ -377,20 +392,29 @@ async function startAddAccount() {
     }
     return orig(...args);
   });
-  setTimeout(() => safe(release), 20000);
-  try {
-    const r = auth.logout();
-    if (r && typeof r.catch === "function") r.catch((e) => log("add account: logout rejected: " + (e && e.message)));
-    log("add account: logged out locally, login screen should be open");
-    return true;
-  } catch (e) { log("add account: logout failed: " + (e && e.message)); safe(release); return false; }
+  const timer = setTimeout(() => safe(release), 30000);
+  // Logging out must really happen, so each step is checked (the token has to disappear), and the next one is tried if it did not.
+  const attempt = async (name, fn) => {
+    try { const r = fn(); if (r && typeof r.catch === "function") r.catch((e) => log("add account: " + name + " rejected: " + (e && e.message))); }
+    catch (e) { log("add account: " + name + " threw: " + (e && e.message)); return false; }
+    const ok = await waitLoggedOut(3500);
+    log("add account: " + name + (ok ? " logged this device out" : " did not log out"));
+    return ok;
+  };
+  let done = await attempt("logout()", () => auth.logout());
+  if (!done && typeof auth.logoutInternal === "function") done = await attempt("logoutInternal()", () => auth.logoutInternal());
+  clearTimeout(timer); safe(release);
+  if (!done) { log("add account: nothing logged out, login screen not opened"); return false; }
+  if (oldToken && oldId) pendingOld = { id: oldId, token: oldToken };
+  log("add account: logged out locally, Discord's login screen should be open");
+  return true;
 }
 
 // ---------- save every account that logs in (via /login, via +, or any other way) ----------
 let autoTimer = null;
 function autoSave(why) {
   clearTimeout(autoTimer);
-  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) log("current account saved (" + why + ")"); }).catch(() => {}); }, 1500);
+  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) { log("current account saved (" + why + ")"); checkOldAccount().catch(() => {}); } }).catch(() => {}); }, 1500);
 }
 function watchLogins(un) {
   // Works without Flux: when the logged-in account id changes (after any login), save it.
@@ -445,7 +469,7 @@ function AccountSheet(props) {
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
   const add = async () => {
     props.onClose(); await sleep(350);
-    if (!(await startAddAccount())) say("Add account", "Could not open Discord's login screen on this version. Use “Add with token” for now, and send the log.");
+    if (!(await startAddAccount())) say("Add account", "Discord did not log out, so its login screen could not open. Use “Add with token” for now and send the log.");
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
