@@ -446,7 +446,7 @@ function AccountSheet(props) {
       last ? null : R.createElement(View, { style: { height: 1, marginLeft: 14 + AV + 12, backgroundColor: C.line } }));
 
   const radio = (on) => on
-    ? R.createElement(View, { style: { width: 22, height: 22, borderRadius: 11, backgroundColor: C.blue, alignItems: "center", justifyContent: "center" } }, R.createElement(View, { style: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#fff" } }))
+    ? R.createElement(View, { style: { width: 22, height: 22, borderRadius: 11, backgroundColor: C.blue, borderWidth: 1.5, borderColor: C.ring, alignItems: "center", justifyContent: "center" } }, R.createElement(View, { style: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#fff" } }))
     : R.createElement(View, { style: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: C.ring } });
 
   const rows = accounts.map((a) => row(a.id,
@@ -466,7 +466,7 @@ function AccountSheet(props) {
           R.createElement(View, { style: { alignSelf: "center", width: 36, height: 5, borderRadius: 3, backgroundColor: C.handle, marginBottom: 12 } }),
           R.createElement(Text, { style: { color: C.text, fontSize: 17, fontWeight: "700", textAlign: "center", marginBottom: busy ? 6 : 12 } }, "Account Manager")),
         busy ? R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 10 } }, R.createElement(ActivityIndicator, { color: C.muted }), R.createElement(Text, { style: { color: C.muted, marginLeft: 8, fontSize: 13 } }, busy)) : null,
-        R.createElement(ScrollView, { style: { flexGrow: 0, backgroundColor: C.card, borderRadius: 16 }, bounces: false }, ...rows),
+        R.createElement(ScrollView, { style: { flexGrow: 0, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.line }, bounces: false }, ...rows),
         R.createElement(Pressable, { onPress: addToken, style: ({ pressed }) => ({ marginTop: 14, height: 46, borderRadius: 23, borderWidth: 1.5, borderColor: C.handle, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.7 : 1 }) },
           R.createElement(Text, { style: { color: C.text, fontSize: 15, fontWeight: "600" } }, "Add with token")),
         R.createElement(Text, { style: { color: C.muted, fontSize: 12, textAlign: "center", marginTop: 10 } }, "Tap an account to switch. Hold to remove."))));
@@ -483,7 +483,7 @@ function ProfileEntry(props) {
     // Only on your own profile (the Note card gets the profile's user id); on other people's profiles nothing shows.
     if (!props || !props.userId || String(props.userId) !== String(currentId())) return open ? R.createElement(AccountSheet, { onClose: () => setOpen(false) }) : null;
     return R.createElement(View, { style: { marginTop: 16 } },
-      R.createElement(Pressable, { onPress: () => setOpen(true), style: ({ pressed }) => ({ flexDirection: "row", alignItems: "center", minHeight: 64, paddingHorizontal: 16, borderRadius: 16, backgroundColor: pressed ? P.line : P.card }) },
+      R.createElement(Pressable, { onPress: () => setOpen(true), style: ({ pressed }) => ({ flexDirection: "row", alignItems: "center", minHeight: 64, paddingHorizontal: 16, borderRadius: 16, borderWidth: 1, borderColor: P.line, backgroundColor: pressed ? P.press : P.card }) },
         cur ? R.createElement(Image, { source: { uri: avatarUrl(cur) }, style: { width: 36, height: 36, borderRadius: 18, marginRight: 12 } }) : null,
         R.createElement(View, { style: { flex: 1, paddingVertical: 12 } },
           R.createElement(Text, { style: { color: P.text, fontSize: 16, fontWeight: "600" } }, "Account Manager"),

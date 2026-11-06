@@ -91,10 +91,16 @@ export function sheetColors(): SheetColors {
     const bg = parseColor(P.bg); if (!bg) return base;
     const to: [number, number, number] = P.dark ? [255, 255, 255] : [0, 0, 0];
     const t = P.dark ? 1 : 0.55;
-    const blue = token(["BRAND_500", "BUTTON_BACKGROUND_BRAND", "TEXT_BRAND"]) ?? base.blue;
+    // Follow the theme's own tokens first (so the Account Manager button / sheet change with the theme like Discord's cards do);
+    // the mixed greys are only the fallback for themes that do not define them.
+    const blue = token(["BUTTON_PRIMARY_BACKGROUND", "REDESIGN_BUTTON_PRIMARY_BACKGROUND", "BUTTON_BACKGROUND_BRAND", "BRAND_500", "TEXT_BRAND"]) ?? base.blue;
+    const sheet = token(["ACTION_SHEET_BACKGROUND", "BOTTOM_SHEET_BACKGROUND", "BACKGROUND_FLOATING", "BG_SURFACE_OVERLAY"]) ?? mix(bg, to, 0.07 * t);
+    const card = token(["CARD_PRIMARY_BG", "CARD_SECONDARY_BG", "BG_SURFACE_RAISED", "BACKGROUND_SECONDARY"]) ?? mix(bg, to, 0.13 * t);
+    const line = token(["BORDER_SUBTLE", "BORDER_FAINT"]) ?? P.sep;
+    const handle = token(["BORDER_STRONG"]) ?? mix(bg, to, 0.3 * t);
     return {
-      sheet: mix(bg, to, 0.07 * t), card: mix(bg, to, 0.13 * t), text: P.text, muted: P.muted,
-      line: P.sep, blue, handle: mix(bg, to, 0.3 * t), ring: P.muted, circle: mix(bg, to, 0.04 * t),
+      sheet, card, text: P.text, muted: P.muted,
+      line, blue, handle, ring: P.muted, circle: mix(bg, to, 0.04 * t),
       press: P.dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)", dark: P.dark,
     };
   } catch { return base; }

@@ -21,8 +21,11 @@ import { log, warn, error } from "./log";
  */
 interface Theme {
   name?: string;
-  /** When true, any surface-like colour Discord asks for that the theme does not define (and that is a dark, near-neutral colour) is turned into black / near-black. */
-  autoBlack?: boolean;
+  /**
+   * When true, any surface-like colour Discord asks for that the theme does not define (and that is a dark, near-neutral colour) is turned into black.
+   * When "all", every opaque dark near-neutral colour is turned black, whatever the token is called (text, icons, borders, brand and status colours are still left alone).
+   */
+  autoBlack?: boolean | "all";
   semanticColors?: Record<string, { dark?: string; light?: string } | string[] | string>;
   rawColors?: Record<string, string>;
 }
@@ -43,8 +46,8 @@ const ALT: Record<string, string> = {
 
 
 // ---- autoBlack: catches surfaces the theme did not list by name ---------------------------------------------------
-const SURFACE_RE = /BACKGROUND|BG_|SURFACE|CARD|SCRIM|BACKDROP|CHAT|INPUT|CHANNELTEXTAREA|SCROLLBAR/;
-const NOT_SURFACE_RE = /MODIFIER|BG_MOD|ACCENT|BRAND|DANGER|POSITIVE|WARNING|STATUS|LINK|MENTION|(^|_)TEXT_|ICON|BORDER|STROKE|HOVER|PLACEHOLDER/;
+const SURFACE_RE = /BACKGROUND|BG_|SURFACE|CARD|SCRIM|BACKDROP|CHAT|INPUT|CHANNELTEXTAREA|SCROLLBAR|EMBED|SHEET|MODAL|CELL|PANEL|CONTAINER|FLOATING|OVERLAY|TOOLBAR|SETTINGS|LIST_|ROW_|MENU|POPOUT|TOOLTIP|ACTION_SHEET|FILL/;
+const NOT_SURFACE_RE = /MODIFIER|BG_MOD|ACCENT|BRAND|DANGER|POSITIVE|WARNING|STATUS|LINK|MENTION|(^|_)TEXT_|ICON|BORDER|STROKE|HOVER|PLACEHOLDER|DIVIDER|SEPARATOR|OUTLINE|SHADOW|ONLINE|IDLE|DND|OFFLINE|STREAMING|SPOILER/;
 
 function parseColor(str: string): [number, number, number, number] | null {
   const t = str.trim();
@@ -62,16 +65,14 @@ function parseColor(str: string): [number, number, number, number] | null {
 }
 
 /** Dark, near-neutral opaque surface colours become black (the darkest) or a very dark grey (raised surfaces). */
-function autoBlackFor(name: string, orig: any): string | undefined {
-  if (typeof orig !== "string" || !SURFACE_RE.test(name) || NOT_SURFACE_RE.test(name)) return undefined;
+function autoBlackFor(name: string, orig: any, all = false): string | undefined {
+  if (typeof orig !== "string" || NOT_SURFACE_RE.test(name) || (!all && !SURFACE_RE.test(name))) return undefined;
   const c = parseColor(orig);
   if (!c || c[3] < 250) return undefined;
   const [r, g, b] = c;
   if (Math.max(r, g, b) - Math.min(r, g, b) > 28) return undefined; // coloured (brand, danger...): leave alone
   const luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  if (luma < 0.14) return "#000000";
-  if (luma < 0.22) return "#0f0f0f";
-  if (luma < 0.34) return "#1a1a1a";
+  if (luma < 0.34) return "#000000"; // pure black: every dark grey Discord uses for a surface (cards, rows, sheets, embeds, input bars)
   return undefined;
 }
 
@@ -194,7 +195,7 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
       const rv = def2?.raw ? r[def2.raw] : undefined;
       if (rv) { hits++; return typeof def2.opacity === "number" && def2.opacity !== 1 ? withAlpha(rv, def2.opacity) : rv; }
     }
-    if (t.autoBlack) { const ab = autoBlackFor(name, ret); if (ab) { hits++; autoHits++; return ab; } }
+    if (t.autoBlack) { const ab = autoBlackFor(name, ret, t.autoBlack === "all"); if (ab) { hits++; autoHits++; return ab; } }
     if (typeof ret === "string" && unthemed.size < 600) unthemed.set(name, ret);
   };
   for (const meta of metas) {

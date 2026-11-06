@@ -1,8 +1,8 @@
 {
   "name": "Black",
   "author": "wvm",
-  "version": "1.0.3",
-  "autoBlack": true,
+  "version": "1.1.0",
+  "autoBlack": "all",
   "semanticColors": {
     "BACKGROUND_PRIMARY": {
       "dark": "#000000",
@@ -245,8 +245,8 @@
       "light": "#000000b3"
     },
     "BACKGROUND_MODIFIER_ACCENT": {
-      "dark": "#ffffff1f",
-      "light": "#ffffff1f"
+      "dark": "#ffffff0f",
+      "light": "#ffffff0f"
     },
     "ANDROID_RIPPLE": {
       "dark": "#ffffff26",
@@ -283,6 +283,198 @@
     "MENTION_FOREGROUND": {
       "dark": "#ffffff",
       "light": "#ffffff"
+    },
+    "BG_MOD_FAINT": {
+      "dark": "#ffffff0a",
+      "light": "#ffffff0a"
+    },
+    "BG_MOD_SUBTLE": {
+      "dark": "#ffffff0f",
+      "light": "#ffffff0f"
+    },
+    "BG_MOD_STRONG": {
+      "dark": "#ffffff1a",
+      "light": "#ffffff1a"
+    },
+    "EMBED_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_SECONDARY_ELEVATED": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_BASE_LOWEST": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_BASE_LOWER": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_SURFACE_HIGH": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_SURFACE_HIGHEST": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_SURFACE_BASE": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_FLOATING_ALT": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "MODAL_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "MODAL_FOOTER_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "SETTINGS_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "SETTINGS_CELL_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "SETTINGS_GROUP_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "ACTION_SHEET_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BOTTOM_SHEET_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "MENU_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "CHANNEL_LIST_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "GUILD_LIST_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "CHANNEL_PICKER_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "CHAT_INPUT_CONTAINER_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "CHAT_INPUT_BAR_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "REDESIGN_INPUT_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "REDESIGN_FLOATING_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "REDESIGN_MODAL_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "REDESIGN_CELL_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BUTTON_BACKGROUND_BRAND": {
+      "dark": "#0d0d0d",
+      "light": "#0d0d0d"
+    },
+    "BUTTON_BACKGROUND_BRAND_HOVER": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_BACKGROUND_BRAND_ACTIVE": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_BACKGROUND_BRAND_PRESSED": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_PRIMARY_BACKGROUND": {
+      "dark": "#0d0d0d",
+      "light": "#0d0d0d"
+    },
+    "BUTTON_PRIMARY_BACKGROUND_HOVER": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_PRIMARY_BACKGROUND_ACTIVE": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_PRIMARY_BORDER": {
+      "dark": "#ffffff40",
+      "light": "#ffffff40"
+    },
+    "BUTTON_PRIMARY_TEXT": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "REDESIGN_BUTTON_PRIMARY_BACKGROUND": {
+      "dark": "#0d0d0d",
+      "light": "#0d0d0d"
+    },
+    "REDESIGN_BUTTON_PRIMARY_ALT_BACKGROUND": {
+      "dark": "#0d0d0d",
+      "light": "#0d0d0d"
+    },
+    "REDESIGN_BUTTON_PRIMARY_PRESSED_BACKGROUND": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "REDESIGN_BUTTON_PRIMARY_BORDER": {
+      "dark": "#ffffff40",
+      "light": "#ffffff40"
+    },
+    "REDESIGN_BUTTON_PRIMARY_TEXT": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "BUTTON_SECONDARY_BACKGROUND": {
+      "dark": "#0d0d0d",
+      "light": "#0d0d0d"
+    },
+    "BUTTON_SECONDARY_BACKGROUND_HOVER": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_SECONDARY_BACKGROUND_ACTIVE": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_OUTLINE_BRAND_BORDER": {
+      "dark": "#ffffff40",
+      "light": "#ffffff40"
+    },
+    "BUTTON_OUTLINE_BRAND_TEXT": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "BUTTON_OUTLINE_BRAND_BACKGROUND_ACTIVE": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
     }
   },
   "rawColors": {
