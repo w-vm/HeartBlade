@@ -357,50 +357,33 @@ function dumpAddFlow() {
   }));
 }
 
-// ---------- learn how Discord opens its own login window ----------
-// pushModal is never called with guessed arguments (a wrong shape crashes the app). Instead every pushModal call Discord makes is
-// described in the log, and the exact argument Discord used for the login modal is kept so "+" can replay it.
-const LOGIN_KEY = "multiaccount-login-modal";
-let learned = null;          // the argument Discord passed to pushModal for the login modal (this session)
-const describe = (v, d) => {
-  d = d || 0;
-  if (typeof v === "function") return "fn:" + (v.name || "anon") + "/" + v.length;
-  if (v === null || typeof v !== "object") return typeof v === "string" ? JSON.stringify(v.slice(0, 70)) : String(v);
-  if (Array.isArray(v)) return d >= 3 ? "[…]" : "[" + v.slice(0, 4).map((x) => describe(x, d + 1)).join(", ") + (v.length > 4 ? ", …" : "") + "]";
-  if (d >= 3) return "{…}";
-  const ks = safe(() => Object.keys(v), []);
-  return "{" + ks.slice(0, 14).map((k) => { const dsc = safe(() => Object.getOwnPropertyDescriptor(v, k), null); return k + ":" + (dsc && "value" in dsc ? describe(dsc.value, d + 1) : "accessor"); }).join(", ") + (ks.length > 14 ? ", …" : "") + "}";
-};
-function watchNavigation(un) {
-  const nav = findMod((m) => hasFn(m, "pushModal") && hasFn(m, "getOpenModalKey"));
-  if (!nav) { log("navigation module not found"); return; }
-  un.push(hb.patcher.before(nav, "pushModal", (args) => {
-    const text = describe(args[0]);
-    if (text.indexOf("multiaccount") !== -1 || text.indexOf("account") !== -1 || text.indexOf("login") !== -1) log("pushModal " + text);
-    if (text.indexOf(LOGIN_KEY) !== -1) { learned = args[0]; log("login modal argument learned"); }
-  }));
-  log("navigation watcher on (open Discord's own Add account once to teach the + button)");
-}
-
-async function openLoginViaNav() {
-  const nav = findMod((m) => hasFn(m, "pushModal") && hasFn(m, "getOpenModalKey"));
-  if (!nav) return false;
-  if (learned) { try { nav.pushModal(learned); log("login modal replayed"); return true; } catch (e) { log("replay failed: " + (e && e.message)); } }
-  return false;
-}
-
+// ---------- "+" : Discord's own login screen ----------
+// This Discord build has no "add account" screen, so "+" does what you did by hand, safely:
+// 1) the current account's token is saved (encrypted), 2) Discord logs out locally, but the logout request to the server is held back,
+// so the saved token stays valid, 3) Discord's own login screen opens, 4) the account you log into is saved automatically (see watchLogins).
 async function startAddAccount() {
-  if (!store.get("native")) setNative(true);                 // makes Discord's own multi-account flow available
-  await saveCurrent(true);
-  const cands = addFlowCandidates();
-  log("add-account candidates: " + (cands.map((c) => c.k).join(", ") || "none"));
-  for (const c of cands) {
-    try { const f = c.m[c.fn || c.k]; const r = f.call(c.m); if (r && typeof r.catch === "function") r.catch((e) => log("add flow " + c.k + " rejected: " + (e && e.message))); log("add flow started via " + c.k); return true; }
-    catch (e) { log("add flow " + c.k + " failed: " + (e && e.message)); }
-  }
-  if (await openLoginViaNav()) return true;
-  dumpAddFlow();
-  return false;
+  const auth = findMod((m) => hasFn(m, "logout") && hasFn(m, "switchAccountToken"));
+  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
+  if (!auth || !http) { log("add account: auth or REST module missing"); return false; }
+  if (!(await saveCurrent(true))) { say("Add account", "The current account could not be saved first, so nothing was changed."); return true; }
+  const yes = await confirmAsk("Add account", "Your current account is saved first. Discord's login screen opens now: log in with the other account and it is saved here automatically. Switch between them any time from Account Manager.", "Continue");
+  if (!yes) return true;
+  if (store.get("native")) setNative(false);                 // the multi-account patch is not needed here
+  let hold = true;
+  const release = hb.patcher.instead(http, "post", (args, orig) => {
+    if (hold && safe(() => safeStringify(args[0]).indexOf("/auth/logout") !== -1, false)) {
+      hold = false; log("add account: logout request held back, the saved token stays valid");
+      return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
+    }
+    return orig(...args);
+  });
+  setTimeout(() => safe(release), 20000);
+  try {
+    const r = auth.logout();
+    if (r && typeof r.catch === "function") r.catch((e) => log("add account: logout rejected: " + (e && e.message)));
+    log("add account: logged out locally, login screen should be open");
+    return true;
+  } catch (e) { log("add account: logout failed: " + (e && e.message)); safe(release); return false; }
 }
 
 // ---------- save every account that logs in (via /login, via +, or any other way) ----------
@@ -412,7 +395,7 @@ function autoSave(why) {
 function watchLogins(un) {
   // Works without Flux: when the logged-in account id changes (after any login), save it.
   let lastId = currentId();
-  const timer = setInterval(() => { const id = safe(() => currentId(), null); if (id && id !== lastId) { lastId = id; autoSave("account changed"); } }, 3000);
+  const timer = setInterval(() => { const id = safe(() => currentId(), null); if (!id) { lastId = null; return; } if (id !== lastId) { lastId = id; autoSave("account changed"); } }, 3000);
   un.push(() => clearInterval(timer));
   const f = safe(() => hb.flux);
   if (!f || typeof f.subscribe !== "function") { log("flux not found: new logins are detected by polling instead"); return; }
@@ -462,7 +445,7 @@ function AccountSheet(props) {
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
   const add = async () => {
     props.onClose(); await sleep(350);
-    if (!(await startAddAccount())) say("Add account", "Discord's login window is not learned yet. Open Discord's own Add account once (see Settings), then press + again. Add with token works meanwhile.");
+    if (!(await startAddAccount())) say("Add account", "Could not open Discord's login screen on this version. Use “Add with token” for now, and send the log.");
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
@@ -585,7 +568,6 @@ return {
     safe(() => patchAvatar(undo));
     safe(() => patchProfile(undo));
     safe(() => patchProfileEntry(undo));
-    safe(() => watchNavigation(undo));
     safe(() => watchLogins(undo));
     setTimeout(() => autoSave("load"), 4000);
     setTimeout(() => safe(diagnose), 6000);
