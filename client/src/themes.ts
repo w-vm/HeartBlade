@@ -26,6 +26,11 @@ interface Theme {
    * When "all", every opaque dark near-neutral colour is turned black, whatever the token is called (text, icons, borders, brand and status colours are still left alone).
    */
   autoBlack?: boolean | "all";
+  /**
+   * When true, every blue / purple "brand" colour Discord asks for (buttons, radios, selected tabs, links, brand text and icons) that the theme
+   * does not define itself is turned neutral: white for text / icons / borders, a very dark grey for fills. Covers token names the theme does not list.
+   */
+  neutralBrand?: boolean;
   semanticColors?: Record<string, { dark?: string; light?: string } | string[] | string>;
   rawColors?: Record<string, string>;
 }
@@ -73,6 +78,36 @@ function autoBlackFor(name: string, orig: any, all = false): string | undefined 
   if (Math.max(r, g, b) - Math.min(r, g, b) > 28) return undefined; // coloured (brand, danger...): leave alone
   const luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   if (luma < 0.34) return "#000000"; // pure black: every dark grey Discord uses for a surface (cards, rows, sheets, embeds, input bars)
+  return undefined;
+}
+
+const BRAND_NAME_RE = /BRAND|BLURPLE|LINK|BUTTON|CONTROL|FOCUS|SELECTED|PRIMARY|ACCENT|CTA|INDIGO|CHECKBOX|RADIO|TOGGLE|SWITCH|SLIDER|PROGRESS|TAB/;
+const FOREGROUND_NAME_RE = /TEXT|ICON|LINK|FOREGROUND|BORDER|STROKE|OUTLINE|RING|FOCUS|LABEL/;
+
+/** Blue / purple (hue 190-295, clearly saturated) "brand" colours become white (text, icons, borders) or a very dark grey (fills); alpha is kept. */
+function brandNeutralFor(name: string, orig: any): string | undefined {
+  if (typeof orig !== "string" || !BRAND_NAME_RE.test(name)) return undefined;
+  const c = parseColor(orig);
+  if (!c) return undefined;
+  const [r, g, b, a] = c;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d < 40 || max === 0) return undefined;
+  let hue: number;
+  if (max === r) hue = ((g - b) / d) * 60; else if (max === g) hue = (2 + (b - r) / d) * 60; else hue = (4 + (r - g) / d) * 60;
+  if (hue < 0) hue += 360;
+  if (hue < 190 || hue > 295) return undefined;
+  const fg = FOREGROUND_NAME_RE.test(name) || a < 250;
+  const v = fg ? 255 : 26;
+  return withAlpha("#" + [v, v, v].map((x) => x.toString(16).padStart(2, "0")).join(""), a / 255);
+}
+
+/** A colour the active theme defines by name (dark mode), read straight from the theme file without going through Discord's resolver. */
+export function themeColor(names: string[]): string | undefined {
+  try {
+    const s = current?.semanticColors;
+    if (!s) return undefined;
+    for (const n of names) { const v = pick(s[n], false); if (v) return v; }
+  } catch { /* ignore */ }
   return undefined;
 }
 
@@ -196,6 +231,7 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
       if (rv) { hits++; return typeof def2.opacity === "number" && def2.opacity !== 1 ? withAlpha(rv, def2.opacity) : rv; }
     }
     if (t.autoBlack) { const ab = autoBlackFor(name, ret, t.autoBlack === "all"); if (ab) { hits++; autoHits++; return ab; } }
+    if (t.neutralBrand) { const nb = brandNeutralFor(name, ret); if (nb) { hits++; autoHits++; return nb; } }
     if (typeof ret === "string" && unthemed.size < 600) unthemed.set(name, ret);
   };
   for (const meta of metas) {

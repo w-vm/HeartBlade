@@ -4,7 +4,7 @@ import * as metro from "../metro";
 import * as native from "../native";
 import { BRAND, LOGO_PNG } from "../brand";
 import { error } from "../log";
-import { themeRestylesColors } from "../themes";
+import { themeRestylesColors, themeColor } from "../themes";
 
 const lz = metro.lazy;
 export const RN = lz<any>(() => metro.findByProps("AppRegistry", "Alert"));
@@ -93,11 +93,11 @@ export function sheetColors(): SheetColors {
     const t = P.dark ? 1 : 0.55;
     // Follow the theme's own tokens first (so the Account Manager button / sheet change with the theme like Discord's cards do);
     // the mixed greys are only the fallback for themes that do not define them.
-    const blue = token(["BUTTON_PRIMARY_BACKGROUND", "REDESIGN_BUTTON_PRIMARY_BACKGROUND", "BUTTON_BACKGROUND_BRAND", "BRAND_500", "TEXT_BRAND"]) ?? base.blue;
-    const sheet = token(["ACTION_SHEET_BACKGROUND", "BOTTOM_SHEET_BACKGROUND", "BACKGROUND_FLOATING", "BG_SURFACE_OVERLAY"]) ?? mix(bg, to, 0.07 * t);
-    const card = token(["CARD_PRIMARY_BG", "CARD_SECONDARY_BG", "BG_SURFACE_RAISED", "BACKGROUND_SECONDARY"]) ?? mix(bg, to, 0.13 * t);
-    const line = token(["BORDER_SUBTLE", "BORDER_FAINT"]) ?? P.sep;
-    const handle = token(["BORDER_STRONG"]) ?? mix(bg, to, 0.3 * t);
+    const blue = themeColor(["CONTROL_BRAND_FOREGROUND", "CONTROL_BRAND_FOREGROUND_NEW", "BUTTON_FILLED_BRAND_BACKGROUND", "BUTTON_PRIMARY_BACKGROUND"]) ?? token(["CONTROL_BRAND_FOREGROUND", "BUTTON_PRIMARY_BACKGROUND", "REDESIGN_BUTTON_PRIMARY_BACKGROUND", "BUTTON_BACKGROUND_BRAND", "BRAND_500", "TEXT_BRAND"]) ?? base.blue;
+    const sheet = themeColor(["ACTION_SHEET_BACKGROUND", "BOTTOM_SHEET_BACKGROUND", "BACKGROUND_FLOATING"]) ?? token(["ACTION_SHEET_BACKGROUND", "BOTTOM_SHEET_BACKGROUND", "BACKGROUND_FLOATING", "BG_SURFACE_OVERLAY"]) ?? mix(bg, to, 0.07 * t);
+    const card = themeColor(["CARD_PRIMARY_BG", "CARD_SECONDARY_BG", "BG_SURFACE_RAISED", "BACKGROUND_SECONDARY"]) ?? token(["CARD_PRIMARY_BG", "CARD_SECONDARY_BG", "BG_SURFACE_RAISED", "BACKGROUND_SECONDARY"]) ?? mix(bg, to, 0.13 * t);
+    const line = themeColor(["BORDER_SUBTLE", "BORDER_FAINT"]) ?? token(["BORDER_SUBTLE", "BORDER_FAINT"]) ?? (P.dark ? "rgba(255,255,255,0.16)" : P.sep);
+    const handle = themeColor(["BORDER_STRONG"]) ?? token(["BORDER_STRONG"]) ?? mix(bg, to, 0.3 * t);
     return {
       sheet, card, text: P.text, muted: P.muted,
       line, blue, handle, ring: P.muted, circle: mix(bg, to, 0.04 * t),

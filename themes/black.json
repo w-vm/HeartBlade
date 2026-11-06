@@ -1,8 +1,9 @@
 {
   "name": "Black",
   "author": "wvm",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "autoBlack": "all",
+  "neutralBrand": true,
   "semanticColors": {
     "BACKGROUND_PRIMARY": {
       "dark": "#000000",
@@ -397,8 +398,8 @@
       "light": "#000000"
     },
     "BUTTON_BACKGROUND_BRAND": {
-      "dark": "#0d0d0d",
-      "light": "#0d0d0d"
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
     },
     "BUTTON_BACKGROUND_BRAND_HOVER": {
       "dark": "#1a1a1a",
@@ -413,8 +414,8 @@
       "light": "#1a1a1a"
     },
     "BUTTON_PRIMARY_BACKGROUND": {
-      "dark": "#0d0d0d",
-      "light": "#0d0d0d"
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
     },
     "BUTTON_PRIMARY_BACKGROUND_HOVER": {
       "dark": "#1a1a1a",
@@ -433,12 +434,12 @@
       "light": "#ffffff"
     },
     "REDESIGN_BUTTON_PRIMARY_BACKGROUND": {
-      "dark": "#0d0d0d",
-      "light": "#0d0d0d"
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
     },
     "REDESIGN_BUTTON_PRIMARY_ALT_BACKGROUND": {
-      "dark": "#0d0d0d",
-      "light": "#0d0d0d"
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
     },
     "REDESIGN_BUTTON_PRIMARY_PRESSED_BACKGROUND": {
       "dark": "#1a1a1a",
@@ -475,6 +476,82 @@
     "BUTTON_OUTLINE_BRAND_BACKGROUND_ACTIVE": {
       "dark": "#1a1a1a",
       "light": "#1a1a1a"
+    },
+    "BUTTON_FILLED_BRAND_BACKGROUND": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BUTTON_FILLED_BRAND_BACKGROUND_HOVER": {
+      "dark": "#262626",
+      "light": "#262626"
+    },
+    "BUTTON_FILLED_BRAND_BACKGROUND_PRESSED": {
+      "dark": "#262626",
+      "light": "#262626"
+    },
+    "BUTTON_FILLED_BRAND_BACKGROUND_ACTIVE": {
+      "dark": "#262626",
+      "light": "#262626"
+    },
+    "BUTTON_FILLED_BRAND_BORDER": {
+      "dark": "#ffffff40",
+      "light": "#ffffff40"
+    },
+    "BUTTON_FILLED_BRAND_TEXT": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "BUTTON_FILLED_BRAND_ICON": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "BG_BRAND": {
+      "dark": "#1a1a1a",
+      "light": "#1a1a1a"
+    },
+    "BG_BRAND_HOVER": {
+      "dark": "#262626",
+      "light": "#262626"
+    },
+    "BG_BRAND_PRESSED": {
+      "dark": "#262626",
+      "light": "#262626"
+    },
+    "CONTROL_BRAND_FOREGROUND": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "CONTROL_BRAND_FOREGROUND_NEW": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "CONTROL_BRAND_FOREGROUND_HOVER": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "TEXT_BRAND": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "ICON_BRAND": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "TEXT_LINK": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "TEXT_BRAND_LINK": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "BORDER_BRAND": {
+      "dark": "#ffffff40",
+      "light": "#ffffff40"
+    },
+    "BORDER_FOCUS": {
+      "dark": "#ffffff80",
+      "light": "#ffffff80"
     }
   },
   "rawColors": {
