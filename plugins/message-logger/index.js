@@ -12,7 +12,7 @@ const DEFAULTS = {
   ignoreBots: false, ignoreSelf: true,
   ignoreUsers: "", ignoreChannels: "", ignoreGuilds: "",
   scope: "all",                 // all | servers | dms
-  strike: false, colorNotes: true, showTime: true,                // wrap deleted text in ~~strikethrough~~
+  strike: false, colorNotes: true, showTime: true, clock: "24",                // wrap deleted text in ~~strikethrough~~
   label: "Deleted",             // line added under a deleted message
   showEditHistory: true,
   keepLog: true, logLimit: 300, cacheLimit: 2000,
@@ -36,7 +36,11 @@ const TAG_RE = /^([\u2063\u2064])([\u200b\u200c\u200d\u2060]+)\u2062/;
 const encSeq = (n) => { let t = ""; do { t = DIG[n % 4] + t; n = Math.floor(n / 4); } while (n > 0); return t; };
 const decSeq = (t) => { let n = 0; for (const ch of t) n = n * 4 + DIG.indexOf(ch); return n; };
 let seqN = 0; const bySeq = new Map();
-const hms = (t) => { const d = new Date(t); const p = (n) => String(n).padStart(2, "0"); return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()); };
+const hms = (t) => {
+  const d = new Date(t); const p = (n) => String(n).padStart(2, "0");
+  if (cfg("clock") === "12") { const h = d.getHours() % 12 || 12; return p(h) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + " " + (d.getHours() < 12 ? "AM" : "PM"); }
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+};
 
 // ---------- cache of messages we have seen ----------
 const cache = new Map();   // id -> { id, channelId, guildId, content, authorId, author, bot, deleted, history: [] }
@@ -265,6 +269,7 @@ function LoggerSettings() {
     ]),
     R.createElement(Group, { title: "Look" }, [
       sw("colorNotes", "Colour the notes", "Deleted in red, edited in amber. Tap a note in the chat for options."), sw("showTime", "Show the time in notes"),
+      cycle("clock", "Time format", [["24", "24-hour"], ["12", "12-hour"]]),
       sw("strike", "Strike through deleted text"), sw("showEditHistory", "Show earlier text of edits"),
       cycle("label", "Deleted label", [["Deleted", "Deleted"], ["Deleted message", "Deleted message"], ["Removed", "Removed"], ["Gone", "Gone"]]),
     ]),
