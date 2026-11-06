@@ -139,18 +139,27 @@ interface Hit { el: any; type: any; text: string; propKeys: string[]; }
 interface Info { name: string; type: any; el: any; }
 const parentOf = new WeakMap<object, Info>();
 const hits: Hit[] = [];
+const seenTexts = new Map<string, { n: number; by: string }>();
 let muted = false; let spyOn = false; let spyFilter = ""; let spyCount = 0; const spyUndo: Array<() => void> = [];
-const TEXT_PROPS = ["title", "label", "text", "placeholder", "subtitle", "description", "accessibilityLabel", "children", "value", "name", "header", "message"];
+const SKIP_PROPS = new Set(["style", "source", "key", "ref", "testID", "nativeID", "onPress", "onLayout", "hitSlop", "contentContainerStyle"]);
 
+/** Every short string reachable from props (plain objects / arrays up to 4 levels, never functions or elements). */
 function textsOf(p: any): string[] {
   const res: string[] = [];
   if (!p || typeof p !== "object") return res;
-  const add = (v: any, depth = 0) => {
-    if (typeof v === "string") res.push(v);
-    else if (typeof v === "number") res.push(String(v));
-    else if (Array.isArray(v) && depth < 2) v.forEach((x) => add(x, depth + 1));
+  const seen = new Set<any>();
+  const add = (v: any, depth: number) => {
+    if (res.length >= 40) return;
+    if (typeof v === "string") { if (v.length >= 1 && v.length <= 300) res.push(v); return; }
+    if (typeof v === "number") { res.push(String(v)); return; }
+    if (!v || typeof v !== "object" || depth > 4 || seen.has(v) || v.$$typeof) return;
+    seen.add(v);
+    if (Array.isArray(v)) { for (const x of v.slice(0, 30)) add(x, depth + 1); return; }
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) return;
+    for (const k of Object.keys(v).slice(0, 30)) { if (SKIP_PROPS.has(k)) continue; const d = Object.getOwnPropertyDescriptor(v, k); if (d && "value" in d) add(d.value, depth + 1); }
   };
-  for (const k of TEXT_PROPS) { try { add(p[k]); } catch { /* getter */ } }
+  add(p, 0);
   return res;
 }
 function childEls(p: any, extra: any[] = []): any[] {
@@ -168,9 +177,11 @@ function onElement(type: any, props: any, el: any, extraChildren: any[] = []) {
     props = el.props ?? props; // the finished element already has children merged in
     const info: Info = { name: nameOf(type), type, el };
     for (const c of childEls(props, extraChildren)) parentOf.set(c, info);
+    const all = textsOf(props);
+    for (const x of all) { if (x.length < 2 || x.length > 120) continue; const r = seenTexts.get(x); if (r) r.n++; else if (seenTexts.size < 4000) seenTexts.set(x, { n: 1, by: info.name }); }
     if (!spyFilter) return;
     const f = low(spyFilter);
-    const t = textsOf(props).find((s) => low(s).includes(f));
+    const t = all.find((s) => low(s).includes(f));
     const nameHit = low(info.name).includes(f);
     if ((t !== undefined || nameHit) && hits.length < 300) hits.push({ el, type, text: t ?? `(component name matches)`, propKeys: keysOf(props).filter((k) => k !== "children").slice(0, 14) });
   } catch { /* never break rendering */ }
@@ -186,7 +197,7 @@ function patchFactory(holder: any, key: string, jsx: boolean) {
 }
 
 export function spyStart(filter = "") {
-  spyStop(); muted = false; hits.length = 0; spyCount = 0; spyFilter = filter; spyOn = true;
+  spyStop(); muted = false; hits.length = 0; spyCount = 0; seenTexts.clear(); spyFilter = filter; spyOn = true;
   const R = metro.findByProps("createElement", "useState");
   if (R) patchFactory(R, "createElement", false);
   for (const m of metro.findAllLoaded((e) => { try { return typeof e.jsx === "function" || typeof e.jsxs === "function" || typeof e.jsxDEV === "function"; } catch { return false; } }).slice(0, 4))
@@ -211,12 +222,18 @@ export function spyResults(max = 25) {
   }
   return new Out(lines.join("\n"));
 }
+/** Every distinct text the spy saw (optionally filtered) and which component drew it. Use it to learn what the screen really contains. */
+export function spyTexts(query = "", max = 80) {
+  const q = low(query); const lines: string[] = [];
+  for (const [t, r] of seenTexts) { if (q && !low(t).includes(q)) continue; lines.push(`${String(r.n).padStart(4)}x  "${t.length > 70 ? t.slice(0, 70) + "…" : t}"  <${r.by}>`); if (lines.length >= max) break; }
+  return new Out(lines.length ? `${seenTexts.size} distinct texts seen\n` + lines.join("\n") : `${seenTexts.size} distinct texts seen, none match "${query}"`);
+}
 export const spyMute = (on: boolean) => { muted = on; };
 export const spyClear = () => { hits.length = 0; return new Out("cleared"); };
 
 export const dev = {
   modules, props, names, moduleOf, where, get, fns, inspect, store, trace, traces, untrace,
-  spy: { start: spyStart, stop: spyStop, results: spyResults, clear: spyClear, mute: spyMute },
+  spy: { start: spyStart, stop: spyStop, results: spyResults, clear: spyClear, mute: spyMute, texts: spyTexts },
   help: () => new Out([
     "dev.names('Profile')        components/functions by name + their module",
     "dev.modules('note')         modules with a matching export key",
@@ -228,6 +245,7 @@ export const dev = {
     "dev.trace(obj,'key')        log calls of a method; traces() / untrace()",
     "dev.spy.start('Note')       record rendered UI containing that text",
     "dev.spy.results()           matches, parent chain, module of each",
+    "dev.spy.texts('edit')        every text the spy saw (learn what the screen contains)",
     "$_                          result of the previous line",
   ].join("\n")),
 };

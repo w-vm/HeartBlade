@@ -39,6 +39,8 @@ const body = React.createElement(ProfileBody, null, card);
 const res = dev.spy.results().text;
 assert.match(res, /"Note"/); assert.match(res, /<Text>/);
 assert.match(res, /<NoteCard> #2 NoteCard/); assert.match(res, /<ProfileBody> #2 ProfileBody/);
+const nested = React.createElement("Row", { title: { text: "Orbs Balance", extra: [1] }, onPress() {} });
+assert.match(dev.spy.texts("orbs").text, /"Orbs Balance"\s+<Row>/);
 dev.spy.stop();
 const n = dev.spy.results().text; // still readable after stop
 assert.match(n, /stopped/);
