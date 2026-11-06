@@ -110,15 +110,14 @@ const scrollLocks: Array<(locked: boolean) => void> = [];
 export const lockScroll = (locked: boolean) => { const f = scrollLocks[scrollLocks.length - 1]; if (f) f(locked); };
 
 function ScreenBody(p: { content: any[] }) {
-  const { useState, useEffect, useRef } = RX();
+  const { useEffect, useRef } = RX();
   const { View, ScrollView } = RN(); const P = palette();
-  const [locked, setLocked] = useState(false);
   const ref = useRef(null as any);
   useEffect(() => {
-    // setNativeProps is immediate (same touch); the state keeps the prop correct on the next render.
-    const set = (v: boolean) => { try { ref.current?.setNativeProps?.({ scrollEnabled: !v }); } catch { /* ignore */ } setLocked(v); };
+    // Native prop only (immediate, no re-render while a finger is down). The JSX prop never changes, so React never resets it.
+    const set = (v: boolean) => { try { ref.current?.setNativeProps?.({ scrollEnabled: !v }); } catch { /* ignore */ } };
     scrollLocks.push(set);
-    return () => { const i = scrollLocks.indexOf(set); if (i >= 0) scrollLocks.splice(i, 1); };
+    return () => { const i = scrollLocks.indexOf(set); if (i >= 0) scrollLocks.splice(i, 1); try { set(false); } catch { /* ignore */ } };
   }, []);
   // The outer View paints the whole area (corners and safe areas included), so Discord's own colour never peeks through.
   return h(View, { style: { flex: 1, backgroundColor: P.bg } },
@@ -128,7 +127,7 @@ function ScreenBody(p: { content: any[] }) {
       contentContainerStyle: { padding: 16, paddingBottom: 56, backgroundColor: P.bg },
       contentInsetAdjustmentBehavior: "automatic",
       keyboardShouldPersistTaps: "handled",
-      scrollEnabled: !locked,
+      directionalLockEnabled: true,
     }, ...p.content));
 }
 
@@ -264,7 +263,7 @@ let closeOpenRow: (() => void) | null = null;
  * Use it as a component: h(SwipeRow, {...}, row).
  */
 export function SwipeRow(p: { onDelete: () => void; label?: string; children?: any }) {
-  const { useRef, useState, useEffect } = RX();
+  const { useRef, useEffect } = RX();
   const { View, Text, Pressable, Animated, PanResponder } = RN(); const P = palette();
   const W = 92;
   const label = p.label ?? "Delete";
@@ -274,8 +273,8 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   const width = useRef(0);
   const opened = useRef(false);
   const navLocked = useRef(false);
+  const moved = useRef(false);
   const responder = useRef(null as any);
-  const [isOpen, setOpen] = useState(false);
   const lockNav = (on: boolean) => {
     if (on === navLocked.current) return;
     navLocked.current = on; gestureLocks += on ? 1 : -1; applyGestures();
@@ -285,7 +284,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   if (!x.current) { x.current = new Animated.Value(0); try { x.current.addListener?.((e: any) => { pos.current = e.value; }); } catch { /* ignore */ } }
 
   const settle = (to: number, velocity = 0) => {
-    opened.current = to !== 0; setOpen(to !== 0);
+    opened.current = to !== 0;
     if (to !== 0) lockNav(true); else lockNav(false);
     if (to !== 0) { if (closeOpenRow && closeOpenRow !== closer.current) closeOpenRow(); closeOpenRow = closer.current; }
     else if (closeOpenRow === closer.current) closeOpenRow = null;
@@ -297,28 +296,28 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   useEffect(() => () => { if (closeOpenRow === closer.current) closeOpenRow = null; lockNav(false); }, []);
 
   if (!responder.current) {
-    const horizontal = (_e: any, g: any) => {
-      const yes = Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
-      if (yes) { lockScroll(true); lockNav(true); }          // switch the page's own gestures off before they can start
-      return yes;
-    };
+    // Clearly horizontal (the finger may drift a little vertically): the row takes the drag before the page scroll does.
+    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy);
     // The row can follow the finger all the way to the left, but never goes right of its resting place.
     const band = (v: number) => Math.max(-(width.current || 4000), Math.min(0, v));
     const full = () => Math.max(W * 2, width.current * 0.5);
     responder.current = PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
+      // While the row is open every touch on it belongs to the row (drag right = close, tap = close), nothing under it reacts.
+      onStartShouldSetPanResponderCapture: () => opened.current,
+      onStartShouldSetPanResponder: () => opened.current,
       // Capture phase: a clearly horizontal drag is ours before the switch, the row's button or the scroll view can claim it.
       onMoveShouldSetPanResponderCapture: horizontal,
       onMoveShouldSetPanResponder: horizontal,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
         try { x.current.stopAnimation?.(); } catch { /* ignore */ }
-        start.current = pos.current;
+        start.current = pos.current; moved.current = false;
         lockScroll(true); lockNav(true);
       },
-      onPanResponderMove: (_e: any, g: any) => x.current.setValue(band(start.current + g.dx)),
+      onPanResponderMove: (_e: any, g: any) => { if (Math.abs(g.dx) > 4) moved.current = true; x.current.setValue(band(start.current + g.dx)); },
       onPanResponderRelease: (_e: any, g: any) => {
         lockScroll(false);
+        if (!moved.current) { settle(0); return; }                          // a plain tap on an open row only closes it
         const at = start.current + g.dx;
         if (at < -full()) { settle(-W, g.vx); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
         const open = g.vx < -0.35 ? true : g.vx > 0.35 ? false : at < -W / 2;
@@ -335,10 +334,14 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
     h(LabelBox, { style: labelStyle },
       h(Pressable, { onPress: () => { settle(0); p.onDelete(); }, accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
         h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, label))),
-    h(Animated.View, { ...responder.current.panHandlers, style: { backgroundColor: P.card, transform: [{ translateX: x.current }] } },
-      p.children,
-      // While open, a tap on the row only closes it (it must not toggle or open anything).
-      isOpen ? h(Pressable, { onPress: () => settle(0), style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } }) : null));
+    h(Animated.View, {
+      ...responder.current.panHandlers,
+      onTouchStart: () => lockNav(true),
+      onTouchEnd: () => { setTimeout(() => { if (!opened.current) lockNav(false); }, 60); },
+      onTouchCancel: () => { setTimeout(() => { if (!opened.current) lockNav(false); }, 60); },
+      style: { backgroundColor: P.card, transform: [{ translateX: x.current }] },
+    },
+      p.children));
 }
 
 /**
