@@ -300,7 +300,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
     const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 4 && Math.abs(g.dx) > Math.abs(g.dy);
     // The row can follow the finger all the way to the left, but never goes right of its resting place.
     const band = (v: number) => Math.max(-(width.current || 4000), Math.min(0, v));
-    const full = () => Math.max(W * 2, width.current * 0.5);
+    const full = () => Math.max(W * 1.5, width.current * 0.5);
     responder.current = PanResponder.create({
       // While the row is open every touch on it belongs to the row (drag right = close, tap = close), nothing under it reacts.
       onStartShouldSetPanResponderCapture: () => opened.current,
@@ -319,7 +319,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
         lockScroll(false);
         if (!moved.current) { settle(0); return; }                          // a plain tap on an open row only closes it
         const at = start.current + g.dx;
-        if (at < -Math.max(full(), width.current * 0.7)) { settle(-W, g.vx); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
+        if (at <= -full()) { settle(-W, g.vx); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
         // Any small drag decides by its direction: left opens the Delete button, right closes it.
         if (g.dx < -6) settle(-W, g.vx);
         else if (g.dx > 6) settle(0, g.vx);
@@ -462,4 +462,7 @@ export function reloadApp(): boolean {
     || tryCall(() => { const m = RN()?.DevSettings; return m?.reload ? () => m.reload() : undefined; });
 }
 
-export function openUrl(url: string) { try { RN()?.Linking?.openURL(url); } catch { /* ignore */ } }
+export function openUrl(url: string, onFail?: () => void) {
+  try { const r: any = RN()?.Linking?.openURL(url); if (onFail && r && typeof r.catch === "function") r.catch(() => onFail()); }
+  catch { if (onFail) onFail(); }
+}

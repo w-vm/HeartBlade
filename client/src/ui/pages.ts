@@ -84,10 +84,16 @@ function DiscordRow(props: { id?: string } | null) {
 }
 
 /** Small author credit for list rows: the author's Discord avatar + name (only for the project's author; others show their name). */
+const isMine = (name: string) => {
+  const n = name.trim().toLowerCase();
+  const u = cachedUser(BRAND.discordId)?.username?.toLowerCase();
+  return n === BRAND.author.toLowerCase() || n === BRAND.instagram.toLowerCase() || (!!u && (n === u || n === "@" + u));
+};
+
 function AuthorChip(props: { name: string }) {
   const { useState, useEffect } = RX();
-  const { View, Text, Image } = RN(); const P = palette();
-  const mine = props.name.toLowerCase() === BRAND.author.toLowerCase();
+  const { View, Text, Image, Pressable } = RN(); const P = palette();
+  const mine = isMine(props.name);
   const [user, setUser] = useState(() => (mine ? cachedUser(BRAND.discordId) : null));
   useEffect(() => {
     if (!mine || user) return;
@@ -95,7 +101,7 @@ function AuthorChip(props: { name: string }) {
     loadUser(BRAND.discordId).then((u) => { if (alive && u) setUser(u); }, () => { /* keep the fallback */ });
     return () => { alive = false; };
   }, []);
-  return h(View, { style: { flexDirection: "row", alignItems: "center", marginTop: 5 } },
+  return h(Pressable, { disabled: !mine, hitSlop: 8, onPress: () => openProfile(BRAND.discordId), style: { flexDirection: "row", alignItems: "center", marginTop: 5, alignSelf: "flex-start" } },
     mine && user?.avatar ? h(Image, { source: { uri: user.avatar }, style: { width: 15, height: 15, borderRadius: 8, marginRight: 5 } }) : null,
     h(Text, { numberOfLines: 1, style: { color: P.muted, fontSize: 12 } }, mine ? (user?.username ?? "Discord") : props.name));
 }
@@ -262,7 +268,7 @@ function InfoPage(props: any) {
 
   // Made by: same credit as the HeartBlade page, with the Discord account only (no Instagram).
   if (author) {
-    const mine = author.toLowerCase() === BRAND.author.toLowerCase();
+    const mine = isMine(author);
     kids.push(Group({ title: "Made by", children: [mine ? h(DiscordRow, null) : Row({ title: author })] }));
   }
   return Screen({ children: kids });

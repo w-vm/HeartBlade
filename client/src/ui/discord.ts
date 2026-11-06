@@ -1,6 +1,7 @@
 import * as metro from "../metro";
 import { BRAND } from "../brand";
 import { openUrl } from "./kit";
+import { log } from "../log";
 
 // Looks up the author's Discord account inside the running app (name + avatar) and opens the profile in-app.
 
@@ -39,11 +40,21 @@ export async function loadUser(id: string): Promise<DUser | null> {
   return null;
 }
 
-/** Opens the profile sheet inside Discord; falls back to the https link only if the in-app opener is missing. */
+const OPENERS = ["showUserProfile", "openUserProfile", "openUserProfileSheet", "showUserProfileSheet", "openUserProfileModal"];
+
+/**
+ * Opens the profile inside Discord, never in the browser. Order: Discord's own profile opener (several known names,
+ * a failing one is skipped), then Discord's own app link (discord://, handled by the app itself), and only as the very
+ * last resort the https link.
+ */
 export function openProfile(id: string = BRAND.discordId) {
-  try {
-    const m = profileOpener();
-    if (typeof m?.showUserProfile === "function") { m.showUserProfile({ userId: id }); return; }
-  } catch { /* fall through */ }
-  openUrl(BRAND.discordUrl);
+  for (const name of OPENERS) {
+    try {
+      const m = metro.findByProps(name);
+      if (typeof m?.[name] !== "function") continue;
+      try { m[name]({ userId: id }); log(`profile opened in-app via ${name}`); return; } catch (e) { log(`profile opener ${name} failed: ${(e as any)?.message ?? e}`); }
+    } catch { /* next name */ }
+  }
+  openUrl(`discord://-/users/${id}`, () => openUrl(BRAND.discordUrl));
+  log("profile opened via discord:// link");
 }
