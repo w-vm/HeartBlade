@@ -2,7 +2,7 @@ import { dev, installFiberHook } from "./dev";
 import { installMetroHook, findLoaded, byProps, onModuleInit, findByProps, findByName, findByStoreName, find, findAll } from "./metro";
 import { readPrefs } from "./prefs";
 import { startEnabledPlugins } from "./plugins";
-import { startEnabledTheme, applyTheme, removeTheme } from "./themes";
+import { startEnabledTheme, applyTheme, removeTheme, maybeEarlyTheme } from "./themes";
 import * as native from "./native";
 import { installSettingsEntry, settingsDone, settingsStats } from "./settings";
 import { runningPlugins } from "./plugins";
@@ -13,6 +13,8 @@ import { startUpdateCheck } from "./updates";
 // Must happen synchronously, before Discord's own bundle registers its modules.
 installMetroHook();
 installFiberHook(); // lets the console read the rendered React tree (dev.tree.find)
+// Theme early: patch Discord's colour module the moment it initialises, before any screen has resolved (and cached) its colours.
+onModuleInit((_id, ex) => { try { maybeEarlyTheme(ex); } catch (e) { error("early theme", e); } });
 
 (globalThis as any).__hb = { version: __HB_VERSION__, native: native.hasNative(), metro: { find, findAll, findByProps, findByName, findByStoreName }, theme: { apply: applyTheme, remove: removeTheme }, dev }; // handy in Developer > JS console
 log(`runtime ${__HB_VERSION__} (native ${native.version()})`);
