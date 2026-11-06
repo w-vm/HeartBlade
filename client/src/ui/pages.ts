@@ -6,7 +6,7 @@ import { runningPlugins, pluginSettings } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { updateState, onUpdateState, checkUpdates, clearUpdates, markClientCurrent, updatesPending, updateSummary } from "../updates";
-import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, updatePlugins, needsRestart, markChanged } from "../manager";
+import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, updatePlugins, updateThemes, needsRestart, markChanged } from "../manager";
 import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, HeaderButton, Check, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
@@ -191,7 +191,7 @@ function ManagerPage(props: any) {
   const checkPluginUpdates = () => {
     if (upd.busy) return;
     setUpd({ busy: true, msg: "Checking…" });
-    updatePlugins().then((r) => {
+    (isPlugin ? updatePlugins : updateThemes)().then((r) => {
       const msg = r.updated.length
         ? `Found an update and installed it: ${r.updated.join(", ")}. Restart Discord to apply.`
         : r.failed && !r.current ? "Could not check (offline or the link is unavailable)." : "No update found.";
@@ -231,9 +231,9 @@ function ManagerPage(props: any) {
     footer: entries.length ? (sel ? `Tap to select, then Delete. ${chosen.length} selected.` : `Tap ${isPlugin ? "a plugin" : "a theme"} for its info${isPlugin ? " and settings" : ""}. Hold to delete, or use Select to delete several.`) : undefined,
     children: rows.length ? rows : [Row({ title: isPlugin ? "No plugins yet" : "No themes yet", subtitle: "Tap + to add one from a link.", center: true })],
   }));
-  if (isPlugin && entries.length) {
+  if (entries.length) {
     kids.push(Group({
-      children: [Row({ title: "Check for updates", accent: true, subtitle: upd.msg || "Looks for newer versions of your plugins and installs them.", lines: 4, onPress: checkPluginUpdates })],
+      children: [Row({ title: "Check for updates", accent: true, subtitle: upd.msg || `Looks for newer versions of your ${isPlugin ? "plugins" : "themes"} and installs them.`, lines: 4, onPress: checkPluginUpdates })],
     }));
   }
   // The dialog sits next to the screen (not inside the list), so a restart banner appearing above does not remount it.

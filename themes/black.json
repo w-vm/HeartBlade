@@ -1,7 +1,8 @@
 {
   "name": "Black",
   "author": "wvm",
-  "version": "1.0.2",
+  "version": "1.0.3",
+  "autoBlack": true,
   "semanticColors": {
     "BACKGROUND_PRIMARY": {
       "dark": "#000000",

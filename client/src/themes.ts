@@ -21,6 +21,8 @@ import { log, warn, error } from "./log";
  */
 interface Theme {
   name?: string;
+  /** When true, any surface-like colour Discord asks for that the theme does not define (and that is a dark, near-neutral colour) is turned into black / near-black. */
+  autoBlack?: boolean;
   semanticColors?: Record<string, { dark?: string; light?: string } | string[] | string>;
   rawColors?: Record<string, string>;
 }
@@ -39,7 +41,44 @@ const ALT: Record<string, string> = {
   BG_SURFACE_RAISED: "BACKGROUND_MOBILE_PRIMARY",
 };
 
+
+// ---- autoBlack: catches surfaces the theme did not list by name ---------------------------------------------------
+const SURFACE_RE = /BACKGROUND|BG_|SURFACE|CARD|SCRIM|BACKDROP|CHAT|INPUT|CHANNELTEXTAREA|SCROLLBAR/;
+const NOT_SURFACE_RE = /MODIFIER|BG_MOD|ACCENT|BRAND|DANGER|POSITIVE|WARNING|STATUS|LINK|MENTION|(^|_)TEXT_|ICON|BORDER|STROKE|HOVER|PLACEHOLDER/;
+
+function parseColor(str: string): [number, number, number, number] | null {
+  const t = str.trim();
+  const m = /^#([0-9a-f]{3,8})$/i.exec(t);
+  if (m) {
+    let h = m[1];
+    if (h.length === 3 || h.length === 4) h = h.split("").map((c) => c + c).join("");
+    if (h.length === 6) h += "ff";
+    if (h.length !== 8) return null;
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), parseInt(h.slice(6, 8), 16)];
+  }
+  const r = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:[\s,\/]+([\d.]+))?\s*\)$/i.exec(t);
+  if (r) return [+r[1], +r[2], +r[3], r[4] == null ? 255 : Math.round(parseFloat(r[4]) * 255)];
+  return null;
+}
+
+/** Dark, near-neutral opaque surface colours become black (the darkest) or a very dark grey (raised surfaces). */
+function autoBlackFor(name: string, orig: any): string | undefined {
+  if (typeof orig !== "string" || !SURFACE_RE.test(name) || NOT_SURFACE_RE.test(name)) return undefined;
+  const c = parseColor(orig);
+  if (!c || c[3] < 250) return undefined;
+  const [r, g, b] = c;
+  if (Math.max(r, g, b) - Math.min(r, g, b) > 28) return undefined; // coloured (brand, danger...): leave alone
+  const luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  if (luma < 0.14) return "#000000";
+  if (luma < 0.22) return "#0f0f0f";
+  if (luma < 0.34) return "#1a1a1a";
+  return undefined;
+}
+
 let undo: Array<() => void> = [];
+const unthemed = new Map<string, string>();   // token name -> original colour, for tokens the theme did not answer
+const dumped = new Set<string>();
+let autoHits = 0;
 let restyled = false;
 let current: Theme | null = null;
 let hits = 0;
@@ -100,7 +139,7 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
   removeTheme();
   restyled = touchesBackground(theme);
   current = theme;
-  hits = 0;
+  hits = 0; autoHits = 0; unthemed.clear(); dumped.clear();
 
   const exp = exportsHint ?? metro.find(isColorModule);
   const mod = resolveModule(exp);
@@ -155,6 +194,8 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
       const rv = def2?.raw ? r[def2.raw] : undefined;
       if (rv) { hits++; return typeof def2.opacity === "number" && def2.opacity !== 1 ? withAlpha(rv, def2.opacity) : rv; }
     }
+    if (t.autoBlack) { const ab = autoBlackFor(name, ret); if (ab) { hits++; autoHits++; return ab; } }
+    if (typeof ret === "string" && unthemed.size < 600) unthemed.set(name, ret);
   };
   for (const meta of metas) {
     if (patchedMeta.has(meta)) continue;
@@ -164,8 +205,24 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
 
   log(`theme applied: ${theme.name ?? "unnamed"} (patched ${metas.length} resolver, ${Object.keys(theme.semanticColors ?? {}).length} semantic, ${Object.keys(raw).length} raw, tokens by ${byIdentity.size ? "symbol+identity" : "symbol"})`);
   if (typeof setTimeout === "function") {
-    setTimeout(() => { if (current === theme) { if (hits) log(`theme: ${hits} colours served from "${theme.name ?? "theme"}"`); else warn(`theme: no colour was served yet from "${theme.name ?? "theme"}" (token names did not match Discord's?)`); } }, 6000);
+    setTimeout(() => { if (current === theme) { if (hits) log(`theme: ${hits} colours served from "${theme.name ?? "theme"}"${autoHits ? ` (${autoHits} by autoBlack)` : ""}`); else warn(`theme: no colour was served yet from "${theme.name ?? "theme"}" (token names did not match Discord's?)`); dumpUnthemed(); } }, 6000);
+    setTimeout(() => { if (current === theme) dumpUnthemed(); }, 30000);
   }
+}
+
+/** Logs the colour tokens Discord asked for that the theme did not answer (name=original colour), so they can be added to the theme. */
+function dumpUnthemed() {
+  const fresh = [...unthemed.entries()].filter(([k]) => !dumped.has(k));
+  if (!fresh.length) return;
+  fresh.forEach(([k]) => dumped.add(k));
+  log(`theme: ${fresh.length} tokens not themed:`);
+  let line = "";
+  for (const [k, v] of fresh) {
+    const part = `${k}=${v}`;
+    if (line.length + part.length > 700) { log(line); line = ""; }
+    line += (line ? " " : "") + part;
+  }
+  if (line) log(line);
 }
 
 let startedFor: string | null = null;

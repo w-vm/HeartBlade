@@ -186,6 +186,33 @@ export function updatePlugins(): Promise<PluginUpdateResult> {
   return chain.then(() => { if (res.updated.length) markChanged(); return res; });
 }
 
+/**
+ * Manual theme update (the themes page button): re-downloads every installed theme from the link it was installed with
+ * and replaces it only when the file changed. Enabled state is kept; Discord needs a restart to show it.
+ */
+export function updateThemes(): Promise<PluginUpdateResult> {
+  const res: PluginUpdateResult = { updated: [], current: 0, failed: 0 };
+  let chain: Promise<void> = Promise.resolve();
+  for (const e of readRegistry().filter((x) => x.type === "theme")) {
+    const url = parseUrl(e.url);
+    if (!url) { res.failed++; continue; }
+    chain = chain.then(() => getText(url).then((t) => {
+      let theme: any;
+      try { theme = JSON.parse(t); } catch { throw new Error("Not valid JSON"); }
+      const ok = theme && typeof theme === "object" && ((theme.semanticColors && typeof theme.semanticColors === "object") || (theme.rawColors && typeof theme.rawColors === "object"));
+      if (!ok) throw new Error("Not a HeartBlade theme");
+      const before = readMeta("theme", e.id);
+      if (native.readFile(`themes/${e.id}.json`) === t) { res.current++; return; }
+      native.writeFile(`themes/${e.id}.json`, t);
+      if (url !== e.url) upsert("theme", e.id, url);
+      const to = typeof theme.version === "string" ? theme.version : "";
+      res.updated.push(`${typeof theme.name === "string" ? theme.name : before.name}${before.version && to && before.version !== to ? ` (${before.version} to ${to})` : ""}`);
+      log(`updated theme ${e.id}`);
+    }).catch((err: any) => { res.failed++; log(`theme update failed for ${e.id}: ${String(err?.message ?? err)}`); }));
+  }
+  return chain.then(() => { if (res.updated.length) markChanged(); return res; });
+}
+
 export function installTheme(input: string): Promise<string> {
   const url = parseUrl(input);
   if (!url) return Promise.reject(new Error("Invalid URL"));
