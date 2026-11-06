@@ -1,4 +1,4 @@
-// Account Manager v0.5.5 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.5.6 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -288,22 +288,6 @@ function registerCommands(un) {
   log("commands registered: " + commands.map((c) => "/" + c.name).join(", "));
 }
 
-function AccountsContent(props) {
-  try {
-    const { View, Text, Image } = RN; const { Group, Row, SwitchRow } = kit;
-    const [, set] = R.useState(0); const bump = () => set((n) => n + 1); const close = props && props.onClose; const cur = currentId(); const accounts = listAccounts();
-    const rows = accounts.map((a) => R.createElement(Row, { key: a.id, title: a.name, subtitle: a.id === cur ? "Active" : undefined, left: R.createElement(Image, { source: { uri: avatarUrl(a) }, style: { width: 34, height: 34, borderRadius: 17 } }), right: a.id === cur ? R.createElement(Text, { style: { color: kit.palette().ok, fontSize: 18 } }, "✓") : undefined, onPress: a.id === cur ? undefined : () => { Promise.resolve(confirmAsk("Switch", "Switch to " + a.name + "?", "Switch")).then(async (yes) => { if (!yes) return; const t = readTokens()[a.id]; if (!t) return say("Missing token", "Add again."); const r = await switchTo(t); if (r) { bump(); if (close) close(); } }); }, onLongPress: () => confirmAsk("Remove " + a.name + "?", "Remove from list?", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } }), }));
-    return R.createElement(View, null,
-      R.createElement(Group, { title: "Accounts", footer: "Tap to switch. Long press to remove. Tokens are encrypted." }, rows.length ? rows : [R.createElement(Row, { key: "none", title: "No accounts yet", subtitle: "Use Save or Add below.", center: true })]),
-      R.createElement(Group, { title: "Add" }, [
-          R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
-          R.createElement(Row, { key: "off", title: "Add account (Discord login)", chevron: true, onPress: () => { startAddAccount().then((ok) => { if (!ok) say("Add account", "Could not open Discord's login window on this version."); }); } }),
-          R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
-          R.createElement(SwitchRow, { key: "nat", title: "Native multi-account", subtitle: "Enable email/password login.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Manager", "Native login enabled."); } }),
-      ]));
-  } catch(e) { return R.createElement(RN.Text, { style: { color: "red", padding: 20 } }, "Error loading UI."); }
-}
-
 // ---------- account list UI: the button on the profile page + the sheet ----------
 
 const safeStringify = (obj) => {
@@ -317,104 +301,61 @@ const safeStringify = (obj) => {
   } catch (e) { return ""; }
 };
 
-// ---------- "+" : Discord's own add-account / login window ----------
-const ADD_GOOD = /(add|new|another).*account|account.*(add|new)|multi.?account.*(login|modal|flow|screen)|(show|open|push|present|start|launch|navigate).*login/i;
-const ADD_BAD = /^(handle|on|set|get|is|has|use|can|_|remove|delete|logout|validate|sync)/i;
-const NESTED = ["MultiAccountManagerNative", "LoginRequiredActionManager"];
-
-function addFlowCandidates() {
-  const hit = [];
-  safe(() => hb.metro.findAll((m) => {
-    if (!m || isStub(m)) return false;
-    safe(() => {
-      for (const k of Object.keys(m)) {
-        if (typeof k !== "string") continue;
-        if (!ADD_BAD.test(k) && ADD_GOOD.test(k) && hasFn(m, k)) hit.push({ m, k, w: /add.*account|account.*add/i.test(k) ? 0 : 1 });
-        if (NESTED.indexOf(k) !== -1) {
-          const o = safe(() => Object.getOwnPropertyDescriptor(m, k).value, null);
-          if (o && typeof o === "object") for (const k2 of Object.keys(o)) if (!ADD_BAD.test(k2) && ADD_GOOD.test(k2) && hasFn(o, k2)) hit.push({ m: o, k: k + "." + k2, fn: k2, w: 0 });
-        }
-      }
-    });
-    return false;
-  }));
-  return hit.sort((x, y) => x.w - y.w);
+// ---------- "+" : Discord's own login page in a pop-up window; the current account is never logged out ----------
+// A WebView opens discord.com/login (private, no saved web session). When the login succeeds the page's token is read,
+// checked, saved as a new account and switched to. The old account stays saved and valid because nothing is logged out.
+const LOGIN_JS = '(function(){ if(window.__hbTok) return; window.__hbTok=true; var sent="";' +
+  'function post(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}' +
+  'function fromLS(){try{var f=document.createElement("iframe");f.style.display="none";document.body.appendChild(f);var t=f.contentWindow.localStorage.getItem("token");f.remove();return t?JSON.parse(t):null;}catch(e){return null;}}' +
+  'function fromWebpack(){try{var m;window.webpackChunkdiscord_app.push([[Symbol()],{},function(r){for(var k in r.c){var e=r.c[k].exports;if(e&&e.default&&typeof e.default.getToken==="function"){var t=e.default.getToken();if(t)m=t;}}}]);return m||null;}catch(e){return null;}}' +
+  'setInterval(function(){var t=fromLS()||fromWebpack();if(typeof t==="string"&&t!==sent){sent=t;post({hbToken:t});}},1200);})(); true;';
+const LOGIN_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+let webViewComp;
+function findWebView() {
+  if (webViewComp !== undefined) return webViewComp;
+  const isComp = (x) => !!x && (typeof x === "function" || (typeof x === "object" && !!x.$$typeof));
+  const nameOk = (x) => /webview/i.test(safe(() => String(x.displayName || x.name || ""), ""));
+  let comp = safe(() => RN.WebView, null);
+  if (!isComp(comp)) {
+    const m = findMod((m) => isComp(m.WebView) || (isComp(m.default) && nameOk(m.default)));
+    comp = m ? (isComp(m.WebView) ? m.WebView : m.default) : null;
+  }
+  if (!isComp(comp)) comp = safe(() => RN.requireNativeComponent("RNCWebView"), null);
+  if (!isComp(comp)) { log("add account: no WebView component found"); comp = null; }
+  else log("add account: WebView component found");
+  return (webViewComp = comp);
 }
 
-// Written to the log when the + press finds nothing, so the exact Discord function can be wired in next time.
-let dumped = false;
-function dumpAddFlow() {
-  if (dumped) return; dumped = true;
-  const keysOf = (o) => safe(() => Reflect.ownKeys(o).map(String).map((k) => { const d = Object.getOwnPropertyDescriptor(o, k); return k + (d && typeof d.value === "function" ? "()" : ""); }).join(", "), "?");
-  safe(() => hb.metro.findAll((m) => {
-    if (!m || isStub(m)) return false;
-    const ks = safe(() => Object.keys(m), []);
-    if (ks.indexOf("MULTI_ACCOUNT_LOGIN_MODAL_KEY") !== -1) log("dump modal-key module: MULTI_ACCOUNT_LOGIN_MODAL_KEY=" + safe(() => String(m.MULTI_ACCOUNT_LOGIN_MODAL_KEY)) + " | keys: " + keysOf(m).slice(0, 900));
-    for (const n of NESTED) if (ks.indexOf(n) !== -1) log("dump " + n + " keys: " + keysOf(safe(() => Object.getOwnPropertyDescriptor(m, n).value, {})).slice(0, 1200));
-    if (hasFn(m, "pushModal")) log("dump pushModal module keys: " + keysOf(m).slice(0, 1200));
-    if (hasFn(m, "switchAccountToken")) log("dump auth module keys: " + keysOf(m).slice(0, 1200));
-    return false;
-  }));
-}
-
-// ---------- "+" : Discord's own login screen ----------
-// This Discord build has no "add account" screen, so "+" does what you did by hand, safely:
-// 1) the current account's token is saved (encrypted), 2) Discord logs out locally, but the logout request to the server is held back,
-// so the saved token stays valid, 3) Discord's own login screen opens, 4) the account you log into is saved automatically (see watchLogins).
-let pendingOld = null;      // the account we left; checked once the new login is saved, to prove its token survived
-async function waitLoggedOut(ms) {
-  const end = Date.now() + ms;
-  while (Date.now() < end) { if (!safe(() => currentToken(), null)) return true; await sleep(250); }
-  return !safe(() => currentToken(), null);
-}
-async function checkOldAccount() {
-  const p = pendingOld; if (!p || currentId() === p.id) return;
-  pendingOld = null;
-  const v = await validateToken(p.token);
-  log("add account: the previous account's saved login is " + (v.ok ? "still valid" : "NOT valid (" + v.reason + ")"));
-  if (!v.ok) say("Add account", "The previous account's saved login no longer works (Discord ended that session). Add it again with /login or its token.");
-}
-
-async function startAddAccount() {
-  const auth = findMod((m) => hasFn(m, "logout") && hasFn(m, "switchAccountToken"));
-  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
-  if (!auth || !http) { log("add account: auth or REST module missing"); return false; }
-  if (!(await saveCurrent(true))) { say("Add account", "The current account could not be saved first, so nothing was changed."); return true; }
-  const yes = await confirmAsk("Add account", "Your current account is saved first. Discord's login screen opens now: log in with the other account and it is saved here automatically. Switch between them any time from Account Manager.", "Continue");
-  if (!yes) return true;
-  if (store.get("native")) setNative(false);                 // the multi-account patch is not needed here
-  const oldToken = track(currentToken()), oldId = currentId();
-  let hold = true;
-  const release = hb.patcher.instead(http, "post", (args, orig) => {
-    if (hold && safe(() => safeStringify(args[0]).indexOf("/auth/logout") !== -1, false)) {
-      hold = false; log("add account: logout request held back, the saved token stays valid");
-      return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
-    }
-    return orig(...args);
-  });
-  const timer = setTimeout(() => safe(release), 30000);
-  // Logging out must really happen, so each step is checked (the token has to disappear), and the next one is tried if it did not.
-  const attempt = async (name, fn) => {
-    try { const r = fn(); if (r && typeof r.catch === "function") r.catch((e) => log("add account: " + name + " rejected: " + (e && e.message))); }
-    catch (e) { log("add account: " + name + " threw: " + (e && e.message)); return false; }
-    const ok = await waitLoggedOut(3500);
-    log("add account: " + name + (ok ? " logged this device out" : " did not log out"));
-    return ok;
+function AddLogin(props) {
+  const { View, Text, Pressable, Modal, ActivityIndicator } = RN; const C = colors();
+  const WV = findWebView();
+  const [loading, setLoading] = R.useState(true);
+  const done = R.useRef(false);
+  const onMessage = (e) => {
+    if (done.current) return;
+    const d = safe(() => JSON.parse(e.nativeEvent.data), null);
+    if (d && typeof d.hbToken === "string") { done.current = true; props.onToken(d.hbToken); }
   };
-  let done = await attempt("logout()", () => auth.logout());
-  if (!done && typeof auth.logoutInternal === "function") done = await attempt("logoutInternal()", () => auth.logoutInternal());
-  clearTimeout(timer); safe(release);
-  if (!done) { log("add account: nothing logged out, login screen not opened"); return false; }
-  if (oldToken && oldId) pendingOld = { id: oldId, token: oldToken };
-  log("add account: logged out locally, Discord's login screen should be open");
-  return true;
+  return R.createElement(Modal, { visible: true, animationType: "slide", presentationStyle: "pageSheet", onRequestClose: props.onClose },
+    R.createElement(View, { style: { flex: 1, backgroundColor: C.sheet } },
+      R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 14 } },
+        R.createElement(Text, { style: { color: C.text, fontSize: 17, fontWeight: "700" } }, "Add account"),
+        R.createElement(Pressable, { onPress: props.onClose, hitSlop: 12 }, R.createElement(Text, { style: { color: C.blue, fontSize: 16, fontWeight: "600" } }, "Cancel"))),
+      R.createElement(View, { style: { flex: 1 } },
+        WV ? R.createElement(WV, {
+          source: { uri: "https://discord.com/login" }, style: { flex: 1 },
+          incognito: true, javaScriptEnabled: true, domStorageEnabled: true, originWhitelist: ["*"], userAgent: LOGIN_UA,
+          injectedJavaScript: LOGIN_JS, injectedJavaScriptForMainFrameOnly: false, messagingEnabled: true,
+          onMessage, onLoadEnd: () => setLoading(false),
+        }) : null,
+        loading ? R.createElement(View, { pointerEvents: "none", style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" } }, R.createElement(ActivityIndicator, { color: C.muted })) : null)));
 }
 
 // ---------- save every account that logs in (via /login, via +, or any other way) ----------
 let autoTimer = null;
 function autoSave(why) {
   clearTimeout(autoTimer);
-  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) { log("current account saved (" + why + ")"); checkOldAccount().catch(() => {}); } }).catch(() => {}); }, 1500);
+  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) { log("current account saved (" + why + ")"); } }).catch(() => {}); }, 1500);
 }
 function watchLogins(un) {
   // Works without Flux: when the logged-in account id changes (after any login), save it.
@@ -439,6 +380,7 @@ function AccountSheet(props) {
   const C = colors();
   const [, force] = R.useState(0); const bump = () => force((n) => n + 1);
   const [busy, setBusy] = R.useState("");
+  const [adding, setAdding] = R.useState(false);
   const cur = currentId();
   const accounts = listAccounts().slice().sort((a, b) => (b.id === cur ? 1 : 0) - (a.id === cur ? 1 : 0));
 
@@ -467,9 +409,23 @@ function AccountSheet(props) {
     switchTo(t).then((r) => { setBusy(""); if (r) props.onClose(); }).catch(() => setBusy(""));
   };
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
-  const add = async () => {
-    props.onClose(); await sleep(350);
-    if (!(await startAddAccount())) say("Add account", "Discord did not log out, so its login screen could not open. Use “Add with token” for now and send the log.");
+  const add = () => {
+    if (!findWebView()) return say("Add account", "The login window is not available in this build. Use “Add with token”.");
+    setAdding(true);
+  };
+  const handleToken = async (raw) => {
+    setBusy("Signing in…");
+    try {
+      const v = await validateToken(raw);
+      if (!v.ok) { setBusy(""); setAdding(false); return say("Add account", v.reason); }
+      await saveCurrent(true);
+      saveAccount(v.token, v.user);
+      setAdding(false);
+      if (v.user.id === currentId()) { setBusy(""); bump(); return; }
+      setBusy("Switching to " + v.user.name + "…");
+      const r = await switchTo(v.token);
+      setBusy(""); if (r) props.onClose(); else bump();
+    } catch (e) { setBusy(""); setAdding(false); log("add account failed: " + (e && e.message)); }
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
@@ -498,6 +454,7 @@ function AccountSheet(props) {
   const backdrop = ty.interpolate({ inputRange: [0, H], outputRange: [0.55, 0], extrapolate: "clamp" });
   return R.createElement(Modal, { visible: true, transparent: true, animationType: "none", statusBarTranslucent: true, onRequestClose: () => dismiss() },
     R.createElement(View, { style: { flex: 1, justifyContent: "flex-end" } },
+      adding ? R.createElement(AddLogin, { onClose: () => setAdding(false), onToken: handleToken }) : null,
       R.createElement(Animated.View, { style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "#000", opacity: backdrop } },
         R.createElement(Pressable, { onPress: () => dismiss(), style: { flex: 1 } })),
       R.createElement(Animated.View, { style: { transform: [{ translateY: ty }], backgroundColor: C.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 14, paddingBottom: 30, maxHeight: "85%" } },
@@ -602,5 +559,4 @@ return {
     hbOpenAccounts = () => {};
     secrets.clear();
   },
-  settings: kit ? function AccountsSettings() { return R.createElement(AccountsContent, null); } : undefined,
 };
