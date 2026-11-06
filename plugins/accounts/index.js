@@ -1,4 +1,4 @@
-// Account Manager v0.4.3 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.4.4 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -421,6 +421,8 @@ function ProfileEntry() {
     const [open, setOpen] = R.useState(false);
     R.useEffect(() => { hbOpenAccounts = () => setOpen(true); return () => { hbOpenAccounts = () => {}; }; }, []);
     const cur = listAccounts().find((a) => a.id === currentId());
+    // Only on your own profile page (its "Edit Profile" button was drawn a moment ago); on other people's profiles nothing shows.
+    if (!(ownSeenAt && Date.now() - ownSeenAt < 90000)) return open ? R.createElement(AccountSheet, { onClose: () => setOpen(false) }) : null;
     return R.createElement(View, { style: { marginTop: 16 } },
       R.createElement(Pressable, { onPress: () => setOpen(true), style: ({ pressed }) => ({ flexDirection: "row", alignItems: "center", minHeight: 64, paddingHorizontal: 16, borderRadius: 16, backgroundColor: pressed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)" }) },
         cur ? R.createElement(Image, { source: { uri: avatarUrl(cur) }, style: { width: 36, height: 36, borderRadius: 18, marginRight: 12 } }) : null,
@@ -432,120 +434,69 @@ function ProfileEntry() {
   } catch (e) { return null; }
 }
 
-// Finds the "Note (only visible to you)" card while Discord builds the profile page and adds our button right after it.
+// Discord's component names are minified (no name could be matched), and the Note card is its own component, so its label
+// is invisible to the parent. So the label itself is the anchor: the element that holds the text is marked, every element
+// created after it that contains a marked element is marked too, and our button is attached to the topmost one created in that
+// render (the root of the Note card). Each level unwraps the level below, so only one button ends up under the card.
 const NOTE_RE = /^note\b.*only visible to you/i;
-const TEXT_KEYS = ["children", "title", "label", "text", "header", "heading", "subtitle", "content", "accessibilityLabel"];
-function scanNote(v, d, b) {
-  if (typeof v === "string") return NOTE_RE.test(v);
-  if (!v || typeof v !== "object" || d > 7 || --b.n < 0) return false;
-  if (v.type === ProfileEntry) { b.entry = true; return false; }
-  if (Array.isArray(v)) { for (const x of v) if (scanNote(x, d + 1, b)) return true; return false; }
-  const p = v.$$typeof && v.props ? v.props : v;
-  for (const k of TEXT_KEYS) { if (p[k] !== undefined && scanNote(p[k], d + 1, b)) return true; }
+const noteMarked = new WeakSet();        // elements that contain the Note label somewhere inside
+const wrapped = new WeakMap();           // fragment we made -> the element it wraps
+let ownSeenAt = 0, inWrap = false;
+const stats = { leaf: 0, wraps: 0, edit: 0 };
+const isNoteText = (s) => typeof s === "string" && s.length >= 12 && s.length <= 60 && NOTE_RE.test(s);
+const isObj = (v) => !!v && typeof v === "object";
+function hasNoteText(props, kids) {
+  if (isObj(props)) for (const k in props) { const v = props[k]; if (typeof v === "string" ? isNoteText(v) : (Array.isArray(v) && v.some(isNoteText))) return true; }
+  for (const c of kids) if (isNoteText(c) || (Array.isArray(c) && c.some(isNoteText))) return true;
   return false;
 }
-const isLeafText = (c) => { const p = c.props || {}; return typeof p.children === "string" || typeof p.title === "string" || typeof p.label === "string"; };
-let entryLogged = false;
-// Discord builds the Note card as its own component, so its text is not visible in the parent's props. It is found by component
-// name instead (e.g. UserProfileNoteCard); the friends / connections cards are the fallback anchor when no note component is there.
-const nameOf = (t) => safe(() => (typeof t === "string" ? t : (t.displayName || t.name || (t.type && (t.type.displayName || t.type.name)) || (t.render && (t.render.displayName || t.render.name)) || "")), "");
-const NOTE_NAME = /note/i, NOT_NOTE = /notif|notice|annot|denote|footnote|keynote/i, NOTE_OK = /profile|card|section/i;
-const ANCHOR_NAME = /(friends?|connections?|membersince|since|about|bio)\w*(card|section)$|^userprofile(friends|connections|membersince|aboutme|bio)/i;
-const seenLists = new Set();
-function diagList(list, parentType) {
-  if (seenLists.size >= 8) return;
-  const names = list.map((c) => (c && typeof c === "object" && c.type ? nameOf(c.type) : "")).filter(Boolean);
-  if (!names.some((n) => /profile/i.test(n))) return;
-  const sig = names.join(",");
-  if (seenLists.has(sig)) return;
-  seenLists.add(sig);
-  log("profile list in <" + nameOf(parentType) + ">: " + names.slice(0, 25).join(", "));
+const markedVal = (v) => isObj(v) && (noteMarked.has(v) || (Array.isArray(v) && v.some((x) => isObj(x) && noteMarked.has(x))));
+function containsMarked(props, kids) {
+  if (isObj(props)) for (const k in props) { const v = props[k]; if (isObj(v) && markedVal(v)) return true; }
+  return kids.some(markedVal);
 }
-function addAfterNote(list, parentType) {
-  if (!Array.isArray(list) || list.length < 2 || list.length > 40 || typeof list[0] === "string") return null;
-  if (list.some((c) => c && typeof c === "object" && c.type === ProfileEntry)) return null;
-  diagList(list, parentType);
-  let at = -1; const b = { n: 40, entry: false };
-  let anchor = -1;
-  for (let i = 0; i < list.length; i++) {
-    const c = list[i];
-    if (c && typeof c === "object" && c.props) {
-      if (c.type === ProfileEntry) return null;
-      if (!isLeafText(c) && scanNote(c, 0, b)) { at = i; break; }
-      const nm = nameOf(c.type);
-      if (nm && NOTE_NAME.test(nm) && !NOT_NOTE.test(nm) && NOTE_OK.test(nm)) { at = i; break; }
-      if (nm && ANCHOR_NAME.test(nm)) anchor = i;
-    }
-  }
-  if (at < 0) at = anchor;
-  if (at < 0 || b.entry) return null;
-  const out = list.slice(); out.splice(at + 1, 0, R.createElement(ProfileEntry, { key: "hb-account-manager" }));
-  if (!entryLogged) { entryLogged = true; const nm = (t) => safe(() => typeof t === "string" ? t : (t.displayName || t.name || "?"), "?"); log("profile button added after <" + nm(list[at].type) + "> inside <" + nm(parentType) + ">, " + list.length + " children"); }
-  return out;
+const unwrapOne = (x) => (isObj(x) && wrapped.has(x) ? wrapped.get(x) : x);
+function unwrapVal(v) {
+  if (Array.isArray(v)) { let hit = false; const o = v.map((x) => { const u = unwrapOne(x); if (u !== x) hit = true; return u; }); return hit ? o : v; }
+  return unwrapOne(v);
 }
-
-// The profile page builds its cards one by one (list items), so there is no sibling list to add to. The Note card itself is
-// wrapped instead: wherever Discord creates it, a fragment with [the card, our button] takes its place, so the button sits right under it.
-const NOTE_TYPE = /^(UserProfile|Profile|User|Mobile)?Notes?(Card|Section|Row|Container|Cell|Item|View)?$/;
-const seenNames = new Set();
-let inWrap = false, wrapLogged = false;
-const calls = { ce: 0, jsx: 0 };
-function noteDiag(t, via) {
-  calls[via]++;
-  if (seenNames.size >= 80) return;
-  const n = nameOf(t); if (!n || seenNames.has(n) || !/profile|note|friend|connection|membersince|orbs|about|bio/i.test(n)) return;
-  seenNames.add(n); log("profile-ish component: " + n);
+const isEditText = (s) => s === "Edit Profile";
+function sawEdit(args) {
+  const p = args[1];
+  if (isEditText(args[2]) || (isObj(p) && (isEditText(p.children) || isEditText(p.label) || isEditText(p.title)))) { ownSeenAt = Date.now(); if (!stats.edit++) log("own profile page seen (Edit Profile)"); }
 }
-const isNoteType = (t) => { const n = nameOf(t); return !!n && NOTE_TYPE.test(n) && !NOT_NOTE.test(n); };
-const wrapLog = (t) => { if (!wrapLogged) { wrapLogged = true; log("profile button added under <" + nameOf(t) + ">"); } };
-
 function patchProfileEntry(un) {
-  const wrapCE = (args) => {
-    const t = args[0];
-    if (inWrap || typeof t === "string" || typeof t === "symbol" || !t) return null;
-    noteDiag(t, "ce");
-    if (!isNoteType(t)) return null;
+  const before = (args) => {
+    if (inWrap) return;
+    let out = null;
+    for (let i = 2; i < args.length; i++) { const u = unwrapVal(args[i]); if (u !== args[i]) { out = out || args.slice(); out[i] = u; } }
+    const p = args[1];
+    if (isObj(p)) {
+      let np = null;
+      for (const k in p) { const v = p[k]; if (isObj(v)) { const u = unwrapVal(v); if (u !== v) (np = np || Object.assign({}, p))[k] = u; } }
+      if (np) { out = out || args.slice(); out[1] = np; }
+    }
+    sawEdit(out || args);
+    return out || undefined;
+  };
+  const after = (args, ret) => {
+    if (inWrap || !isObj(ret) || !isObj(ret.props)) return;
+    const kids = args.slice(2);
+    const leaf = hasNoteText(args[1], kids);
+    if (!leaf && !containsMarked(args[1], kids)) return;
+    if (leaf && !stats.leaf++) log("Note label seen, attaching the button above it in the tree");
     inWrap = true;
     try {
-      const orig = R.createElement.apply(R, [t, Object.assign({}, args[1], { key: "hb-note" })].concat(args.slice(2)));
-      wrapLog(t);
-      return [R.Fragment, { key: args[1] && args[1].key != null ? args[1].key : undefined }, orig, R.createElement(ProfileEntry, { key: "hb-account-manager" })];
+      const frag = R.createElement(R.Fragment, ret.key != null ? { key: ret.key } : null, ret, R.createElement(ProfileEntry, { key: "hb-account-manager" }));
+      wrapped.set(frag, ret); noteMarked.add(frag); noteMarked.add(ret);
+      stats.wraps++;
+      return frag;
     } finally { inWrap = false; }
   };
-  const wrapJsx = (args) => {
-    const t = args[0];
-    if (inWrap || typeof t === "string" || typeof t === "symbol" || !t) return null;
-    noteDiag(t, "jsx");
-    if (!isNoteType(t)) return null;
-    inWrap = true;
-    try {
-      const orig = R.createElement(t, Object.assign({}, args[1], { key: "hb-note" }));
-      wrapLog(t);
-      return [R.Fragment, { children: [orig, R.createElement(ProfileEntry, { key: "hb-account-manager" })] }, args[2]];
-    } finally { inWrap = false; }
-  };
-  const hookCE = (args) => {
-    try {
-      const w = wrapCE(args); if (w) return w;
-      const props = args[1]; if (props && props.__hb_noscan) return args;
-      if (args.length === 3 && Array.isArray(args[2])) { const o = addAfterNote(args[2], args[0]); if (o) { const n = args.slice(); n[2] = o; return n; } }
-      else if (args.length > 3) { const o = addAfterNote(args.slice(2), args[0]); if (o) return [args[0], args[1]].concat(o); }
-    } catch (e) {}
-    return args;
-  };
-  const hookJsx = (args) => {
-    try {
-      const w = wrapJsx(args); if (w) return w;
-      const props = args[1];
-      if (props && Array.isArray(props.children)) { const o = addAfterNote(props.children, args[0]); if (o) { const n = args.slice(); n[1] = Object.assign({}, props, { children: o }); return n; } }
-    } catch (e) {}
-    return args;
-  };
-  safe(() => un.push(hb.patcher.before(R, "createElement", hookCE)));
-  const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
-  if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", hookJsx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", hookJsx))); }
+  safe(() => un.push(hb.patcher.before(R, "createElement", before)));
+  safe(() => un.push(hb.patcher.after(R, "createElement", after)));
   log("profile hook active");
-  const report = (when) => log("profile hook " + when + ": createElement calls=" + calls.ce + ", jsx calls=" + calls.jsx + ", profile-ish names=" + seenNames.size + ", button " + (wrapLogged ? "added" : "not added yet"));
+  const report = (when) => log("profile hook " + when + ": note label seen " + stats.leaf + "x, levels wrapped " + stats.wraps + ", own profile " + (ownSeenAt ? "seen" : "not seen"));
   setTimeout(() => safe(() => report("after 20s")), 20000);
   setTimeout(() => safe(() => report("after 60s")), 60000);
 }
@@ -577,7 +528,7 @@ return {
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    clearTimeout(autoTimer); entryLogged = false; wrapLogged = false; seenLists.clear(); seenNames.clear(); copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
+    clearTimeout(autoTimer); ownSeenAt = 0; stats.leaf = 0; stats.wraps = 0; stats.edit = 0; copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
     hbOpenAccounts = () => {};
     secrets.clear();
   },

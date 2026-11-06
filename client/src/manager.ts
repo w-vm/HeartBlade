@@ -113,7 +113,13 @@ function fetchPlugin(url: string): Promise<Fetched> {
   const last = (url.split(/[?#]/)[0].split("/").pop() ?? "");
   let manifestUrl: string | null = null;
   let scriptUrl: string;
-  if (last.endsWith(".js")) { scriptUrl = url; }                                   // single-file plugin
+  let sibling = "";
+  if (last.endsWith(".js")) {                                                       // single-file plugin
+    scriptUrl = url;
+    // A manifest.json next to the script (same folder) still names the plugin; it is only trusted when it describes this file.
+    manifestUrl = url.split(/[?#]/)[0].replace(/[^\/]*$/, "") + "manifest.json";
+    sibling = last;
+  }
   else if (last.endsWith(".json")) { manifestUrl = url; scriptUrl = ""; }          // manifest link (script = manifest.main)
   else {                                                                            // folder
     const base = url.endsWith("/") ? url : url + "/";
@@ -125,6 +131,8 @@ function fetchPlugin(url: string): Promise<Fetched> {
     : Promise.resolve({});
 
   return manifestP.then((manifest: any) => {
+    if (sibling && manifest && typeof manifest.main === "string" && manifest.main.replace(/^\.\//, "") !== sibling) manifest = {};   // belongs to another file
+    if (sibling && !(manifest && typeof manifest.name === "string")) manifest = {};
     if (last.endsWith(".json")) scriptUrl = resolveRel(manifestUrl!, typeof manifest.main === "string" ? manifest.main : "index.js");
     return getText(scriptUrl).then((js) => ({ manifest, js, scriptUrl }));
   });
