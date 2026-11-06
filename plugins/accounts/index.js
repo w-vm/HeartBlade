@@ -1,4 +1,4 @@
-// Account Manager v0.3.11 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.4.0 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -96,7 +96,7 @@ const vault = (() => { const v = safe(() => Vault.create(store.get("vk"))); if (
 const listAccounts = () => { const a = store.get("accounts"); return Array.isArray(a) ? a : []; };
 const readTokens = () => safe(() => { const b = store.get("tokens"); return b ? JSON.parse(vault.decrypt(b)) : {}; }, {});
 const writeTokens = (o) => store.set("tokens", vault.encrypt(JSON.stringify(o)));
-function saveAccount(token, user) { const tokens = readTokens(); tokens[user.id] = token; writeTokens(tokens); const rest = listAccounts().filter((a) => a.id !== user.id); rest.push({ id: user.id, name: user.name, avatar: user.avatar || null }); store.set("accounts", rest); }
+function saveAccount(token, user) { const tokens = readTokens(); tokens[user.id] = token; writeTokens(tokens); const rest = listAccounts().filter((a) => a.id !== user.id); rest.push({ id: user.id, name: user.name, username: user.username || null, avatar: user.avatar || null }); store.set("accounts", rest); }
 function removeAccount(id) { const tokens = readTokens(); delete tokens[id]; writeTokens(tokens); store.set("accounts", listAccounts().filter((a) => a.id !== id)); }
 const avatarUrl = (a) => a.avatar ? "https://cdn.discordapp.com/avatars/" + a.id + "/" + a.avatar + ".png?size=96" : "https://cdn.discordapp.com/embed/avatars/" + (Number(String(a.id).slice(-1)) % 5) + ".png";
 
@@ -111,7 +111,7 @@ async function validateToken(raw) {
     if (!r.ok) return { ok: false, reason: "Error (HTTP " + r.status + ")." };
     const u = await r.json();
     if (!u || !u.id) return { ok: false, reason: "Unexpected reply." };
-    return { ok: true, token, user: { id: String(u.id), name: u.global_name || u.username || String(u.id), avatar: u.avatar || null } };
+    return { ok: true, token, user: { id: String(u.id), name: u.global_name || u.username || String(u.id), username: u.username || null, avatar: u.avatar || null } };
   } catch (e) { return { ok: false, reason: "Network error." }; }
 }
 
@@ -131,7 +131,7 @@ async function switchTo(token) {
 }
 
 async function addByToken() { const t = await ask("Add account", "Paste the account token.", true); if (!t) return false; const v = await validateToken(t); if (!v.ok) { say("Not added", v.reason); return false; } saveAccount(v.token, v.user); say("Account Manager", v.user.name + " added."); return true; }
-async function saveCurrent() { const v = await validateToken(track(currentToken())); if (!v.ok) { say("Not saved", v.reason); return false; } saveAccount(v.token, v.user); return true; }
+async function saveCurrent(quiet) { const v = await validateToken(track(currentToken())); if (!v.ok) { if (!quiet) say("Not saved", v.reason); return false; } saveAccount(v.token, v.user); return true; }
 
 let nativeUnpatch = null;
 function setNative(on) {
@@ -273,7 +273,7 @@ const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) =>
 const commands = [
   mkCmd("accounts", "Open Account Manager", [], () => { if (hbOpenAccounts) hbOpenAccounts(); else say("Account Manager", "Go to HeartBlade Settings to open it."); }),
   mkCmd("token", "Show your token", [], (args, ctx) => { safe(() => cmdToken(ctx)); }),
-  mkCmd("login", "Log in with token", [{ name: "token", description: "Token", required: true, type: 3 }], (args) => { (async () => { const res = await switchTo(argOf(args, "token")); if (res && res !== true) { saveAccount(res.token, res.user); say("Account Manager", "Switched to " + res.user.name + " and saved."); } })().catch((e) => say("Error", scrub(e && e.message))); }),
+  mkCmd("login", "Log in with token", [{ name: "token", description: "Token", required: true, type: 3 }], (args) => { (async () => { await saveCurrent(true); const res = await switchTo(argOf(args, "token")); if (res && res !== true) { saveAccount(res.token, res.user); say("Account Manager", "Switched to " + res.user.name + " and saved."); } })().catch((e) => say("Error", scrub(e && e.message))); }),
 ];
 
 function registerCommands(un) {
@@ -297,84 +297,199 @@ function AccountsContent(props) {
       R.createElement(Group, { title: "Accounts", footer: "Tap to switch. Long press to remove. Tokens are encrypted." }, rows.length ? rows : [R.createElement(Row, { key: "none", title: "No accounts yet", subtitle: "Use Save or Add below.", center: true })]),
       R.createElement(Group, { title: "Add" }, [
           R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
+          R.createElement(Row, { key: "off", title: "Add account (Discord login)", chevron: true, onPress: () => { if (!startAddAccount()) say("Add account", "Could not open Discord's login window on this version."); } }),
           R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
           R.createElement(SwitchRow, { key: "nat", title: "Native multi-account", subtitle: "Enable email/password login.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Manager", "Native login enabled."); } }),
       ]));
   } catch(e) { return R.createElement(RN.Text, { style: { color: "red", padding: 20 } }, "Error loading UI."); }
 }
 
-function AccountsModalEntry() {
-  try {
-    const { View, Text, Modal, Pressable } = RN; const { Group, Row } = kit;
-    const [open, setOpen] = R.useState(false);
-    const P = kit.palette(); const cur = listAccounts().find((a) => a.id === currentId());
-
-    R.useEffect(() => {
-        hbOpenAccounts = () => setOpen(true);
-        return () => { hbOpenAccounts = () => {}; };
-    }, []);
-
-    return R.createElement(View, { style: { paddingHorizontal: 16, marginTop: 12 } },
-      R.createElement(Group, null, [R.createElement(Row, { key: "am", title: "Account Manager", subtitle: cur ? cur.name : "Switch or add accounts", chevron: true, onPress: () => setOpen(true) })]),
-      R.createElement(Modal, { visible: open, animationType: "slide", presentationStyle: "pageSheet", onRequestClose: () => setOpen(false) },
-        R.createElement(View, { style: { flex: 1, backgroundColor: P.bg } },
-          R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 } },
-            R.createElement(Text, { style: { color: P.text, fontSize: 20, fontWeight: "700" } }, "Account Manager"),
-            R.createElement(Pressable, { onPress: () => setOpen(false), hitSlop: 12 }, R.createElement(Text, { style: { color: P.accent, fontSize: 17, fontWeight: "600" } }, "Done"))),
-          R.createElement(kit.Screen, { children: [R.createElement(AccountsContent, { key: "c", onClose: () => setOpen(false) })] }))))
-  } catch(e) { return null; }
-}
+// ---------- account list UI: the button on the profile page + the sheet ----------
+const C = { sheet: "#232428", card: "#2b2d31", text: "#f2f3f5", muted: "#b5bac1", line: "#3a3c42", blue: "#5865f2", handle: "#4e5058", ring: "#80848e" };
 
 const safeStringify = (obj) => {
-    try {
-        const seen = new WeakSet();
-        return JSON.stringify(obj, (k, v) => {
-            if (typeof v === "object" && v !== null) {
-                if (seen.has(v)) return "[Circular]";
-                seen.add(v);
-            }
-            if (typeof v === "function") return "[Function]";
-            return v;
-        });
-    } catch(e) { return ""; }
+  try {
+    const seen = new WeakSet();
+    return JSON.stringify(obj, (k, v) => {
+      if (typeof v === "object" && v !== null) { if (seen.has(v)) return "[Circular]"; seen.add(v); }
+      if (typeof v === "function") return "[Function]";
+      return v;
+    });
+  } catch (e) { return ""; }
 };
 
-let sheetLogged = false;
-const isTargetSheet = (props) => {
-    if (!props) return false;
+// ---------- "+" : Discord's own add-account / login window ----------
+function addFlowCandidates() {
+  const bad = /^(handle|on|set|get|is|has|use|_)/i;
+  const good = /add.*account|account.*add|multi.?account.*(login|modal|flow)|login.*multi.?account/i;
+  const hit = [];
+  safe(() => hb.metro.findAll((m) => {
+    if (!m || isStub(m)) return false;
+    safe(() => { for (const k of Object.keys(m)) { if (typeof k === "string" && !bad.test(k) && good.test(k) && hasFn(m, k)) hit.push({ m, k }); } });
+    return false;
+  }));
+  return hit;
+}
+
+function startAddAccount() {
+  if (!store.get("native")) setNative(true);                 // makes Discord's own multi-account flow available
+  const cands = addFlowCandidates();
+  log("add-account candidates: " + (cands.map((c) => c.k).join(", ") || "none"));
+  for (const c of cands) {
+    try { const r = c.m[c.k](); if (r && typeof r.catch === "function") r.catch((e) => log("add flow " + c.k + " rejected: " + (e && e.message))); log("add flow started via " + c.k); return true; }
+    catch (e) { log("add flow " + c.k + " failed: " + (e && e.message)); }
+  }
+  return false;
+}
+
+// ---------- save every account that logs in (via /login, via +, or any other way) ----------
+let autoTimer = null;
+function autoSave(why) {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) log("current account saved (" + why + ")"); }).catch(() => {}); }, 1500);
+}
+function watchLogins(un) {
+  const f = safe(() => hb.flux);
+  if (!f || typeof f.subscribe !== "function") { log("flux not found: accounts are only saved by /login, + and Save current"); return; }
+  for (const ev of ["CONNECTION_OPEN", "LOGIN_SUCCESS"]) {
+    const cb = () => autoSave(ev);
+    safe(() => { f.subscribe(ev, cb); un.push(() => f.unsubscribe(ev, cb)); });
+  }
+}
+
+// ---------- the sheet (look: Discord's "Change Online Status" sheet, rows like Instagram's account switcher) ----------
+function AccountSheet(props) {
+  const { View, Text, Image, Pressable, Modal, ScrollView, ActivityIndicator } = RN;
+  const [, force] = R.useState(0); const bump = () => force((n) => n + 1);
+  const [busy, setBusy] = R.useState("");
+  const cur = currentId();
+  const accounts = listAccounts().slice().sort((a, b) => (b.id === cur ? 1 : 0) - (a.id === cur ? 1 : 0));
+
+  const pick = (a) => {
+    if (busy || a.id === cur) return;
+    const t = readTokens()[a.id]; if (!t) return say("Missing token", "Add " + a.name + " again.");
+    setBusy("Switching to " + a.name + "…");
+    switchTo(t).then((r) => { setBusy(""); if (r) props.onClose(); }).catch(() => setBusy(""));
+  };
+  const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
+  const add = async () => {
+    await saveCurrent(true);                                  // keep the account you are leaving
+    props.onClose(); await sleep(350);
+    if (!startAddAccount()) say("Add account", "Could not open Discord's login window on this version. Use “Add with token” meanwhile, and send the log so it can be fixed.");
+  };
+  const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
+
+  const row = (key, left, title, sub, right, onPress, onLong, last) =>
+    R.createElement(Pressable, { key, onPress, onLongPress: onLong, style: ({ pressed }) => ({ backgroundColor: pressed ? "rgba(255,255,255,0.06)" : "transparent" }) },
+      R.createElement(View, { style: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, height: 76 } },
+        left,
+        R.createElement(View, { style: { flex: 1, marginLeft: 14 } },
+          R.createElement(Text, { numberOfLines: 1, style: { color: C.text, fontSize: 17, fontWeight: "600" } }, title),
+          sub ? R.createElement(Text, { numberOfLines: 1, style: { color: C.muted, fontSize: 13, marginTop: 2 } }, sub) : null),
+        right),
+      last ? null : R.createElement(View, { style: { height: 1, marginLeft: 78, backgroundColor: C.line } }));
+
+  const radio = (on) => on
+    ? R.createElement(View, { style: { width: 28, height: 28, borderRadius: 14, backgroundColor: C.blue, alignItems: "center", justifyContent: "center" } }, R.createElement(View, { style: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#fff" } }))
+    : R.createElement(View, { style: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: C.ring } });
+
+  const rows = accounts.map((a) => row(a.id,
+    R.createElement(Image, { source: { uri: avatarUrl(a) }, style: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.line } }),
+    a.name, a.username ? "@" + a.username : (a.id === cur ? "Active" : undefined), radio(a.id === cur), () => pick(a), () => remove(a), false));
+  rows.push(row("add",
+    R.createElement(View, { style: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#111214", alignItems: "center", justifyContent: "center" } }, R.createElement(Text, { style: { color: "#fff", fontSize: 30, lineHeight: 34, marginTop: -2 } }, "+")),
+    "Add account", undefined, null, add, undefined, true));
+
+  return R.createElement(Modal, { visible: true, transparent: true, animationType: "slide", onRequestClose: props.onClose },
+    R.createElement(View, { style: { flex: 1, justifyContent: "flex-end" } },
+      R.createElement(Pressable, { onPress: props.onClose, style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.55)" } }),
+      R.createElement(View, { style: { backgroundColor: C.sheet, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 16, paddingBottom: 40, maxHeight: "88%" } },
+        R.createElement(View, { style: { alignSelf: "center", width: 40, height: 5, borderRadius: 3, backgroundColor: C.handle, marginTop: 10 } }),
+        R.createElement(Text, { style: { color: C.text, fontSize: 20, fontWeight: "700", textAlign: "center", marginTop: 18, marginBottom: busy ? 6 : 18 } }, "Account Manager"),
+        busy ? R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 14 } }, R.createElement(ActivityIndicator, { color: C.muted }), R.createElement(Text, { style: { color: C.muted, marginLeft: 8 } }, busy)) : null,
+        R.createElement(ScrollView, { style: { flexGrow: 0, backgroundColor: C.card, borderRadius: 18 }, bounces: false }, ...rows),
+        R.createElement(Pressable, { onPress: addToken, style: ({ pressed }) => ({ marginTop: 18, height: 56, borderRadius: 28, borderWidth: 2, borderColor: C.handle, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.7 : 1 }) },
+          R.createElement(Text, { style: { color: C.text, fontSize: 17, fontWeight: "600" } }, "Add with token")),
+        R.createElement(Text, { style: { color: C.muted, fontSize: 12.5, textAlign: "center", marginTop: 12 } }, "Tap an account to switch. Hold to remove."))));
+}
+
+// ---------- the button on the profile page, right under "Note" ----------
+function ProfileEntry() {
+  try {
+    const { View, Text, Image, Pressable } = RN;
+    const P = kit ? kit.palette() : { text: "#f2f3f5", muted: "#b5bac1" };
+    const [open, setOpen] = R.useState(false);
+    R.useEffect(() => { hbOpenAccounts = () => setOpen(true); return () => { hbOpenAccounts = () => {}; }; }, []);
+    const cur = listAccounts().find((a) => a.id === currentId());
+    return R.createElement(View, { style: { marginTop: 16 } },
+      R.createElement(Pressable, { onPress: () => setOpen(true), style: ({ pressed }) => ({ flexDirection: "row", alignItems: "center", minHeight: 64, paddingHorizontal: 16, borderRadius: 16, backgroundColor: pressed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)" }) },
+        cur ? R.createElement(Image, { source: { uri: avatarUrl(cur) }, style: { width: 36, height: 36, borderRadius: 18, marginRight: 12 } }) : null,
+        R.createElement(View, { style: { flex: 1, paddingVertical: 12 } },
+          R.createElement(Text, { style: { color: P.text, fontSize: 16, fontWeight: "600" } }, "Account Manager"),
+          R.createElement(Text, { numberOfLines: 1, style: { color: P.muted, fontSize: 13, marginTop: 2 } }, cur ? cur.name : "Switch or add accounts")),
+        R.createElement(Text, { style: { color: P.muted, fontSize: 24 } }, "›")),
+      open ? R.createElement(AccountSheet, { onClose: () => setOpen(false) }) : null);
+  } catch (e) { return null; }
+}
+
+// Finds the "Note (only visible to you)" card while Discord builds the profile page and adds our button right after it.
+const NOTE_RE = /^note\b.*only visible to you/i;
+const TEXT_KEYS = ["children", "title", "label", "text", "header", "heading", "subtitle", "content", "accessibilityLabel"];
+function scanNote(v, d, b) {
+  if (typeof v === "string") return NOTE_RE.test(v);
+  if (!v || typeof v !== "object" || d > 7 || --b.n < 0) return false;
+  if (v.type === ProfileEntry) { b.entry = true; return false; }
+  if (Array.isArray(v)) { for (const x of v) if (scanNote(x, d + 1, b)) return true; return false; }
+  const p = v.$$typeof && v.props ? v.props : v;
+  for (const k of TEXT_KEYS) { if (p[k] !== undefined && scanNote(p[k], d + 1, b)) return true; }
+  return false;
+}
+const isLeafText = (c) => { const p = c.props || {}; return typeof p.children === "string" || typeof p.title === "string" || typeof p.label === "string"; };
+let entryLogged = false;
+function addAfterNote(list, parentType) {
+  if (!Array.isArray(list) || list.length < 2 || list.length > 40 || typeof list[0] === "string") return null;
+  let at = -1; const b = { n: 40, entry: false };
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c && typeof c === "object" && c.props) { if (c.type === ProfileEntry) return null; if (!isLeafText(c) && scanNote(c, 0, b)) { at = i; break; } }
+  }
+  if (at < 0 || b.entry) return null;
+  const out = list.slice(); out.splice(at + 1, 0, R.createElement(ProfileEntry, { key: "hb-account-manager" }));
+  if (!entryLogged) { entryLogged = true; const nm = (t) => safe(() => typeof t === "string" ? t : (t.displayName || t.name || "?"), "?"); log("profile button added after <" + nm(list[at].type) + "> inside <" + nm(parentType) + ">, " + list.length + " children"); }
+  return out;
+}
+
+function patchProfileEntry(un) {
+  const hookCE = (args) => {
     try {
-        const str = safeStringify(props);
-        return str.includes("Change Online Status") || str.includes("Invisible") || str.includes("Set a custom status") || str.includes("تغيير حالة الاتصال");
-    } catch(e) { return false; }
-};
-
-function patchSheetUI(un) {
-  const inject = (args) => {
-    try {
-        const type = args[0]; const props = args[1];
-        if (!props || props.__hb_inj) return args;
-
-        const name = typeof type === 'string' ? type : (type?.displayName || type?.name || type?.default?.displayName || '');
-        if (name.includes("Text") || name.includes("Input") || name.includes("Scroll")) return args;
-
-        if (isTargetSheet(props)) {
-          const newProps = { ...props, __hb_inj: true };
-          const entry = R.createElement(AccountsModalEntry, { key: "hb-account-manager" });
-          if (Array.isArray(newProps.children)) newProps.children = newProps.children.concat([entry]);
-          else if (newProps.children) newProps.children = [newProps.children, entry];
-          else newProps.children = entry;
-
-          if (!sheetLogged) { sheetLogged = true; log("SUCCESS: Injected into " + name); }
-          const newArgs = args.slice(); newArgs[1] = newProps; return newArgs;
-        }
-    } catch(e) { log("inject error: " + e.message); }
+      const props = args[1]; if (props && props.__hb_noscan) return args;
+      if (args.length === 3 && Array.isArray(args[2])) { const o = addAfterNote(args[2], args[0]); if (o) { const n = args.slice(); n[2] = o; return n; } }
+      else if (args.length > 3) { const o = addAfterNote(args.slice(2), args[0]); if (o) return [args[0], args[1]].concat(o); }
+    } catch (e) {}
     return args;
   };
-
-  safe(() => un.push(hb.patcher.before(R, "createElement", inject)));
+  const hookJsx = (args) => {
+    try {
+      const props = args[1];
+      if (props && Array.isArray(props.children)) { const o = addAfterNote(props.children, args[0]); if (o) { const n = args.slice(); n[1] = Object.assign({}, props, { children: o }); return n; } }
+    } catch (e) {}
+    return args;
+  };
+  safe(() => un.push(hb.patcher.before(R, "createElement", hookCE)));
   const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
-  if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", inject))); safe(() => un.push(hb.patcher.before(rt, "jsxs", inject))); }
-  log("Sheet hook active (Safe Mode).");
+  if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", hookJsx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", hookJsx))); }
+  log("profile hook active");
+}
+
+// One-time dump of the multi-account functions Discord has (helps when a flow is not found).
+function diagnose() {
+  const names = [];
+  safe(() => hb.metro.findAll((m) => {
+    if (!m || isStub(m) || names.length > 14) return false;
+    safe(() => { const ks = Object.keys(m).filter((k) => /multi.?account|add.?account/i.test(k)); if (ks.length) names.push(ks.slice(0, 12).join(",")); });
+    return false;
+  }));
+  log("multi-account keys: " + (names.join(" | ") || "none"));
 }
 
 const undo = [];
@@ -386,11 +501,14 @@ return {
     safe(() => hookCopyButton(undo));
     safe(() => patchAvatar(undo));
     safe(() => patchProfile(undo));
-    if (kit) safe(() => patchSheetUI(undo));
+    safe(() => patchProfileEntry(undo));
+    safe(() => watchLogins(undo));
+    setTimeout(() => autoSave("load"), 4000);
+    setTimeout(() => safe(diagnose), 6000);
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    sheetLogged = false; copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
+    clearTimeout(autoTimer); entryLogged = false; copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
     hbOpenAccounts = () => {};
     secrets.clear();
   },
