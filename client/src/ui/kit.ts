@@ -238,6 +238,20 @@ export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) =>
   });
 }
 
+// The page itself reacts to drags: a horizontal drag to the right goes "back", a vertical drag moves/dismisses the card
+// the settings are shown in. While a row is open or being dragged those navigator gestures are switched off, then restored.
+let swipeNav: any = null;
+export const setSwipeNav = (nav: any) => { swipeNav = nav; };
+let gestureLocks = 0;
+function applyGestures() {
+  const on = gestureLocks === 0;
+  let n = swipeNav;
+  for (let i = 0; n && i < 4; i++) {
+    try { n.setOptions?.(on ? { gestureEnabled: true, fullScreenGestureEnabled: undefined } : { gestureEnabled: false, fullScreenGestureEnabled: false }); } catch { /* ignore */ }
+    try { n = n.getParent?.(); } catch { n = null; }
+  }
+}
+
 let closeOpenRow: (() => void) | null = null;
 
 /**
@@ -259,14 +273,20 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   const start = useRef(0);
   const width = useRef(0);
   const opened = useRef(false);
+  const navLocked = useRef(false);
   const responder = useRef(null as any);
   const [isOpen, setOpen] = useState(false);
+  const lockNav = (on: boolean) => {
+    if (on === navLocked.current) return;
+    navLocked.current = on; gestureLocks += on ? 1 : -1; applyGestures();
+  };
 
   if (!Animated || !PanResponder) return p.children;
   if (!x.current) { x.current = new Animated.Value(0); try { x.current.addListener?.((e: any) => { pos.current = e.value; }); } catch { /* ignore */ } }
 
   const settle = (to: number, velocity = 0) => {
     opened.current = to !== 0; setOpen(to !== 0);
+    if (to !== 0) lockNav(true); else lockNav(false);
     if (to !== 0) { if (closeOpenRow && closeOpenRow !== closer.current) closeOpenRow(); closeOpenRow = closer.current; }
     else if (closeOpenRow === closer.current) closeOpenRow = null;
     // JS driver on purpose: with the native driver the value Discord reads back mid-animation can be stale, which made the next drag start from the wrong place.
@@ -274,10 +294,14 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   };
   const closer = useRef(null as any);
   closer.current = () => settle(0);
-  useEffect(() => () => { if (closeOpenRow === closer.current) closeOpenRow = null; }, []);
+  useEffect(() => () => { if (closeOpenRow === closer.current) closeOpenRow = null; lockNav(false); }, []);
 
   if (!responder.current) {
-    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
+    const horizontal = (_e: any, g: any) => {
+      const yes = Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
+      if (yes) { lockScroll(true); lockNav(true); }          // switch the page's own gestures off before they can start
+      return yes;
+    };
     // The row can follow the finger all the way to the left, but never goes right of its resting place.
     const band = (v: number) => Math.max(-(width.current || 4000), Math.min(0, v));
     const full = () => Math.max(W * 2, width.current * 0.5);
@@ -290,7 +314,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
       onPanResponderGrant: () => {
         try { x.current.stopAnimation?.(); } catch { /* ignore */ }
         start.current = pos.current;
-        lockScroll(true);
+        lockScroll(true); lockNav(true);
       },
       onPanResponderMove: (_e: any, g: any) => x.current.setValue(band(start.current + g.dx)),
       onPanResponderRelease: (_e: any, g: any) => {

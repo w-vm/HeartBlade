@@ -7,7 +7,7 @@ import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { updateState, onUpdateState, checkUpdates, clearUpdates, markClientCurrent, updatesPending, updateSummary } from "../updates";
 import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, updatePlugins, needsRestart, markChanged } from "../manager";
-import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, SwipeRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
+import { RN, RX, h, palette, setSwipeNav, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, SwipeRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
 
@@ -479,6 +479,7 @@ export function PageScreen(props: any) {
   const params = props?.route?.params ?? {};
   const page: string = PAGES[params.page] ? params.page : "root";
   useChrome(props);
+  useEffect(() => { setSwipeNav(props?.navigation); return () => setSwipeNav(null); }, []);
   useEffect(() => { try { props?.navigation?.setOptions?.({ title: params.title ?? BRAND.name }); } catch { /* ignore */ } }, [page, params.title]);
   return h(boundary(), null, PAGES[page](props));
 }
