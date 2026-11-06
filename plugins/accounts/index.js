@@ -305,7 +305,6 @@ function AccountsContent(props) {
 }
 
 // ---------- account list UI: the button on the profile page + the sheet ----------
-const C = { sheet: "#232428", card: "#2b2d31", text: "#f2f3f5", muted: "#b5bac1", line: "#3a3c42", blue: "#5865f2", handle: "#4e5058", ring: "#80848e" };
 
 const safeStringify = (obj) => {
   try {
@@ -319,16 +318,43 @@ const safeStringify = (obj) => {
 };
 
 // ---------- "+" : Discord's own add-account / login window ----------
+const ADD_GOOD = /(add|new|another).*account|account.*(add|new)|multi.?account.*(login|modal|flow|screen)|(show|open|push|present|start|launch|navigate).*login/i;
+const ADD_BAD = /^(handle|on|set|get|is|has|use|can|_|remove|delete|logout|validate|sync)/i;
+const NESTED = ["MultiAccountManagerNative", "LoginRequiredActionManager"];
+
 function addFlowCandidates() {
-  const bad = /^(handle|on|set|get|is|has|use|_)/i;
-  const good = /add.*account|account.*add|multi.?account.*(login|modal|flow)|login.*multi.?account/i;
   const hit = [];
   safe(() => hb.metro.findAll((m) => {
     if (!m || isStub(m)) return false;
-    safe(() => { for (const k of Object.keys(m)) { if (typeof k === "string" && !bad.test(k) && good.test(k) && hasFn(m, k)) hit.push({ m, k }); } });
+    safe(() => {
+      for (const k of Object.keys(m)) {
+        if (typeof k !== "string") continue;
+        if (!ADD_BAD.test(k) && ADD_GOOD.test(k) && hasFn(m, k)) hit.push({ m, k, w: /add.*account|account.*add/i.test(k) ? 0 : 1 });
+        if (NESTED.indexOf(k) !== -1) {
+          const o = safe(() => Object.getOwnPropertyDescriptor(m, k).value, null);
+          if (o && typeof o === "object") for (const k2 of Object.keys(o)) if (!ADD_BAD.test(k2) && ADD_GOOD.test(k2) && hasFn(o, k2)) hit.push({ m: o, k: k + "." + k2, fn: k2, w: 0 });
+        }
+      }
+    });
     return false;
   }));
-  return hit;
+  return hit.sort((x, y) => x.w - y.w);
+}
+
+// Written to the log when the + press finds nothing, so the exact Discord function can be wired in next time.
+let dumped = false;
+function dumpAddFlow() {
+  if (dumped) return; dumped = true;
+  const keysOf = (o) => safe(() => Reflect.ownKeys(o).map(String).map((k) => { const d = Object.getOwnPropertyDescriptor(o, k); return k + (d && typeof d.value === "function" ? "()" : ""); }).join(", "), "?");
+  safe(() => hb.metro.findAll((m) => {
+    if (!m || isStub(m)) return false;
+    const ks = safe(() => Object.keys(m), []);
+    if (ks.indexOf("MULTI_ACCOUNT_LOGIN_MODAL_KEY") !== -1) log("dump modal-key module: MULTI_ACCOUNT_LOGIN_MODAL_KEY=" + safe(() => String(m.MULTI_ACCOUNT_LOGIN_MODAL_KEY)) + " | keys: " + keysOf(m).slice(0, 900));
+    for (const n of NESTED) if (ks.indexOf(n) !== -1) log("dump " + n + " keys: " + keysOf(safe(() => Object.getOwnPropertyDescriptor(m, n).value, {})).slice(0, 1200));
+    if (hasFn(m, "pushModal")) log("dump pushModal module keys: " + keysOf(m).slice(0, 1200));
+    if (hasFn(m, "switchAccountToken")) log("dump auth module keys: " + keysOf(m).slice(0, 1200));
+    return false;
+  }));
 }
 
 function startAddAccount() {
@@ -336,9 +362,10 @@ function startAddAccount() {
   const cands = addFlowCandidates();
   log("add-account candidates: " + (cands.map((c) => c.k).join(", ") || "none"));
   for (const c of cands) {
-    try { const r = c.m[c.k](); if (r && typeof r.catch === "function") r.catch((e) => log("add flow " + c.k + " rejected: " + (e && e.message))); log("add flow started via " + c.k); return true; }
+    try { const f = c.m[c.fn || c.k]; const r = f.call(c.m); if (r && typeof r.catch === "function") r.catch((e) => log("add flow " + c.k + " rejected: " + (e && e.message))); log("add flow started via " + c.k); return true; }
     catch (e) { log("add flow " + c.k + " failed: " + (e && e.message)); }
   }
+  dumpAddFlow();
   return false;
 }
 
@@ -357,13 +384,36 @@ function watchLogins(un) {
   }
 }
 
-// ---------- the sheet (look: Discord's "Change Online Status" sheet, rows like Instagram's account switcher) ----------
+// ---------- the sheet (look: Discord's "Change Online Status" sheet, compact rows like Instagram's account switcher) ----------
+const FALLBACK_COLORS = { sheet: "#232428", card: "#2b2d31", text: "#f2f3f5", muted: "#b5bac1", line: "#3a3c42", blue: "#5865f2", handle: "#4e5058", ring: "#80848e", circle: "#111214", press: "rgba(255,255,255,0.06)", dark: true };
+// Colours follow the active HeartBlade theme (kit.sheetColors); plain Discord dark otherwise.
+const colors = () => Object.assign({}, FALLBACK_COLORS, safe(() => kit && kit.sheetColors && kit.sheetColors(), null) || {});
+
 function AccountSheet(props) {
-  const { View, Text, Image, Pressable, Modal, ScrollView, ActivityIndicator } = RN;
+  const { View, Text, Image, Pressable, Modal, ScrollView, ActivityIndicator, Animated, PanResponder, Dimensions, Easing } = RN;
+  const C = colors();
   const [, force] = R.useState(0); const bump = () => force((n) => n + 1);
   const [busy, setBusy] = R.useState("");
   const cur = currentId();
   const accounts = listAccounts().slice().sort((a, b) => (b.id === cur ? 1 : 0) - (a.id === cur ? 1 : 0));
+
+  // Slide in, and drag the handle / title down to dismiss (or tap outside).
+  const H = Dimensions.get("window").height;
+  const ty = R.useRef(new Animated.Value(H)).current;
+  const closing = R.useRef(false);
+  const dismiss = (after) => {
+    if (closing.current) return; closing.current = true;
+    Animated.timing(ty, { toValue: H, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => { props.onClose(); if (after) after(); });
+  };
+  const dismissRef = R.useRef(dismiss); dismissRef.current = dismiss;
+  R.useEffect(() => { Animated.timing(ty, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(); }, []);
+  const pan = R.useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderMove: (e, g) => { ty.setValue(Math.max(0, g.dy)); },
+    onPanResponderRelease: (e, g) => { if (g.dy > 80 || g.vy > 0.7) dismissRef.current(); else Animated.spring(ty, { toValue: 0, useNativeDriver: true, bounciness: 3 }).start(); },
+    onPanResponderTerminate: () => { Animated.spring(ty, { toValue: 0, useNativeDriver: true }).start(); },
+  })).current;
 
   const pick = (a) => {
     if (busy || a.id === cur) return;
@@ -375,56 +425,60 @@ function AccountSheet(props) {
   const add = async () => {
     await saveCurrent(true);                                  // keep the account you are leaving
     props.onClose(); await sleep(350);
-    if (!startAddAccount()) say("Add account", "Could not open Discord's login window on this version. Use “Add with token” meanwhile, and send the log so it can be fixed.");
+    if (!startAddAccount()) say("Add account", "Could not open Discord's login window yet. Use “Add with token” for now. Details were written to the log.");
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
+  const AV = 40;
   const row = (key, left, title, sub, right, onPress, onLong, last) =>
-    R.createElement(Pressable, { key, onPress, onLongPress: onLong, style: ({ pressed }) => ({ backgroundColor: pressed ? "rgba(255,255,255,0.06)" : "transparent" }) },
-      R.createElement(View, { style: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, height: 76 } },
+    R.createElement(Pressable, { key, onPress, onLongPress: onLong, style: ({ pressed }) => ({ backgroundColor: pressed ? C.press : "transparent" }) },
+      R.createElement(View, { style: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, height: 62 } },
         left,
-        R.createElement(View, { style: { flex: 1, marginLeft: 14 } },
-          R.createElement(Text, { numberOfLines: 1, style: { color: C.text, fontSize: 17, fontWeight: "600" } }, title),
-          sub ? R.createElement(Text, { numberOfLines: 1, style: { color: C.muted, fontSize: 13, marginTop: 2 } }, sub) : null),
+        R.createElement(View, { style: { flex: 1, marginLeft: 12 } },
+          R.createElement(Text, { numberOfLines: 1, style: { color: C.text, fontSize: 15, fontWeight: "600" } }, title),
+          sub ? R.createElement(Text, { numberOfLines: 1, style: { color: C.muted, fontSize: 12.5, marginTop: 1 } }, sub) : null),
         right),
-      last ? null : R.createElement(View, { style: { height: 1, marginLeft: 78, backgroundColor: C.line } }));
+      last ? null : R.createElement(View, { style: { height: 1, marginLeft: 14 + AV + 12, backgroundColor: C.line } }));
 
   const radio = (on) => on
-    ? R.createElement(View, { style: { width: 28, height: 28, borderRadius: 14, backgroundColor: C.blue, alignItems: "center", justifyContent: "center" } }, R.createElement(View, { style: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#fff" } }))
-    : R.createElement(View, { style: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: C.ring } });
+    ? R.createElement(View, { style: { width: 22, height: 22, borderRadius: 11, backgroundColor: C.blue, alignItems: "center", justifyContent: "center" } }, R.createElement(View, { style: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#fff" } }))
+    : R.createElement(View, { style: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: C.ring } });
 
   const rows = accounts.map((a) => row(a.id,
-    R.createElement(Image, { source: { uri: avatarUrl(a) }, style: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.line } }),
+    R.createElement(Image, { source: { uri: avatarUrl(a) }, style: { width: AV, height: AV, borderRadius: AV / 2, backgroundColor: C.line } }),
     a.name, a.username ? "@" + a.username : (a.id === cur ? "Active" : undefined), radio(a.id === cur), () => pick(a), () => remove(a), false));
   rows.push(row("add",
-    R.createElement(View, { style: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#111214", alignItems: "center", justifyContent: "center" } }, R.createElement(Text, { style: { color: "#fff", fontSize: 30, lineHeight: 34, marginTop: -2 } }, "+")),
+    R.createElement(View, { style: { width: AV, height: AV, borderRadius: AV / 2, backgroundColor: C.circle, alignItems: "center", justifyContent: "center" } }, R.createElement(Text, { style: { color: C.text, fontSize: 24, lineHeight: 27, marginTop: -1 } }, "+")),
     "Add account", undefined, null, add, undefined, true));
 
-  return R.createElement(Modal, { visible: true, transparent: true, animationType: "slide", onRequestClose: props.onClose },
+  const backdrop = ty.interpolate({ inputRange: [0, H], outputRange: [0.55, 0], extrapolate: "clamp" });
+  return R.createElement(Modal, { visible: true, transparent: true, animationType: "none", statusBarTranslucent: true, onRequestClose: () => dismiss() },
     R.createElement(View, { style: { flex: 1, justifyContent: "flex-end" } },
-      R.createElement(Pressable, { onPress: props.onClose, style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.55)" } }),
-      R.createElement(View, { style: { backgroundColor: C.sheet, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 16, paddingBottom: 40, maxHeight: "88%" } },
-        R.createElement(View, { style: { alignSelf: "center", width: 40, height: 5, borderRadius: 3, backgroundColor: C.handle, marginTop: 10 } }),
-        R.createElement(Text, { style: { color: C.text, fontSize: 20, fontWeight: "700", textAlign: "center", marginTop: 18, marginBottom: busy ? 6 : 18 } }, "Account Manager"),
-        busy ? R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 14 } }, R.createElement(ActivityIndicator, { color: C.muted }), R.createElement(Text, { style: { color: C.muted, marginLeft: 8 } }, busy)) : null,
-        R.createElement(ScrollView, { style: { flexGrow: 0, backgroundColor: C.card, borderRadius: 18 }, bounces: false }, ...rows),
-        R.createElement(Pressable, { onPress: addToken, style: ({ pressed }) => ({ marginTop: 18, height: 56, borderRadius: 28, borderWidth: 2, borderColor: C.handle, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.7 : 1 }) },
-          R.createElement(Text, { style: { color: C.text, fontSize: 17, fontWeight: "600" } }, "Add with token")),
-        R.createElement(Text, { style: { color: C.muted, fontSize: 12.5, textAlign: "center", marginTop: 12 } }, "Tap an account to switch. Hold to remove."))));
+      R.createElement(Animated.View, { style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "#000", opacity: backdrop } },
+        R.createElement(Pressable, { onPress: () => dismiss(), style: { flex: 1 } })),
+      R.createElement(Animated.View, { style: { transform: [{ translateY: ty }], backgroundColor: C.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 14, paddingBottom: 30, maxHeight: "85%" } },
+        R.createElement(View, Object.assign({ style: { paddingTop: 8, paddingBottom: 4 } }, pan.panHandlers),
+          R.createElement(View, { style: { alignSelf: "center", width: 36, height: 5, borderRadius: 3, backgroundColor: C.handle, marginBottom: 12 } }),
+          R.createElement(Text, { style: { color: C.text, fontSize: 17, fontWeight: "700", textAlign: "center", marginBottom: busy ? 6 : 12 } }, "Account Manager")),
+        busy ? R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 10 } }, R.createElement(ActivityIndicator, { color: C.muted }), R.createElement(Text, { style: { color: C.muted, marginLeft: 8, fontSize: 13 } }, busy)) : null,
+        R.createElement(ScrollView, { style: { flexGrow: 0, backgroundColor: C.card, borderRadius: 16 }, bounces: false }, ...rows),
+        R.createElement(Pressable, { onPress: addToken, style: ({ pressed }) => ({ marginTop: 14, height: 46, borderRadius: 23, borderWidth: 1.5, borderColor: C.handle, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.7 : 1 }) },
+          R.createElement(Text, { style: { color: C.text, fontSize: 15, fontWeight: "600" } }, "Add with token")),
+        R.createElement(Text, { style: { color: C.muted, fontSize: 12, textAlign: "center", marginTop: 10 } }, "Tap an account to switch. Hold to remove."))));
 }
 
 // ---------- the button on the profile page, right under "Note" ----------
 function ProfileEntry(props) {
   try {
     const { View, Text, Image, Pressable } = RN;
-    const P = kit ? kit.palette() : { text: "#f2f3f5", muted: "#b5bac1" };
+    const P = colors();
     const [open, setOpen] = R.useState(false);
     R.useEffect(() => { hbOpenAccounts = () => setOpen(true); return () => { hbOpenAccounts = () => {}; }; }, []);
     const cur = listAccounts().find((a) => a.id === currentId());
     // Only on your own profile (the Note card gets the profile's user id); on other people's profiles nothing shows.
     if (!props || !props.userId || String(props.userId) !== String(currentId())) return open ? R.createElement(AccountSheet, { onClose: () => setOpen(false) }) : null;
     return R.createElement(View, { style: { marginTop: 16 } },
-      R.createElement(Pressable, { onPress: () => setOpen(true), style: ({ pressed }) => ({ flexDirection: "row", alignItems: "center", minHeight: 64, paddingHorizontal: 16, borderRadius: 16, backgroundColor: pressed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)" }) },
+      R.createElement(Pressable, { onPress: () => setOpen(true), style: ({ pressed }) => ({ flexDirection: "row", alignItems: "center", minHeight: 64, paddingHorizontal: 16, borderRadius: 16, backgroundColor: pressed ? P.line : P.card }) },
         cur ? R.createElement(Image, { source: { uri: avatarUrl(cur) }, style: { width: 36, height: 36, borderRadius: 18, marginRight: 12 } }) : null,
         R.createElement(View, { style: { flex: 1, paddingVertical: 12 } },
           R.createElement(Text, { style: { color: P.text, fontSize: 16, fontWeight: "600" } }, "Account Manager"),

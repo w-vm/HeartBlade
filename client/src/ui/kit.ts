@@ -81,6 +81,25 @@ function computePalette(): Palette {
   };
 }
 
+export interface SheetColors { sheet: string; card: string; text: string; muted: string; line: string; blue: string; handle: string; ring: string; circle: string; press: string; dark: boolean; }
+/** Colours for plugin sheets and cards. Discord's dark look by default; when an installed theme restyles colours, everything follows the theme. */
+export function sheetColors(): SheetColors {
+  const base: SheetColors = { sheet: "#232428", card: "#2b2d31", text: "#f2f3f5", muted: "#b5bac1", line: "#3a3c42", blue: "#5865f2", handle: "#4e5058", ring: "#80848e", circle: "#111214", press: "rgba(255,255,255,0.06)", dark: true };
+  try {
+    if (!themeRestylesColors()) return base;
+    const P = palette();
+    const bg = parseColor(P.bg); if (!bg) return base;
+    const to: [number, number, number] = P.dark ? [255, 255, 255] : [0, 0, 0];
+    const t = P.dark ? 1 : 0.55;
+    const blue = token(["BRAND_500", "BUTTON_BACKGROUND_BRAND", "TEXT_BRAND"]) ?? base.blue;
+    return {
+      sheet: mix(bg, to, 0.07 * t), card: mix(bg, to, 0.13 * t), text: P.text, muted: P.muted,
+      line: P.sep, blue, handle: mix(bg, to, 0.3 * t), ring: P.muted, circle: mix(bg, to, 0.04 * t),
+      press: P.dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)", dark: P.dark,
+    };
+  } catch { return base; }
+}
+
 // ---- icons --------------------------------------------------------------------------------------------------
 
 /** Discord's own icon component by name, if it is already loaded (never force-initialises modules). */
