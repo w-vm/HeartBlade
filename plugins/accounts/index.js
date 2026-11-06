@@ -365,9 +365,17 @@ async function startAddAccount() {
     log("add account: " + name + (ok ? " logged this device out" : " did not log out"));
     return ok;
   };
-  let done = false;
-  if (typeof auth.logoutInternal === "function") done = await attempt("logoutInternal() (local only)", () => auth.logoutInternal());
+  let done = false, local = false;
+  if (typeof auth.logoutInternal === "function") { done = await attempt("logoutInternal() (local only)", () => auth.logoutInternal()); local = done; }
   if (!done) done = await attempt("logout()", () => auth.logout());
+  if (done && local) {
+    // logoutInternal() only clears the session; unlike logout() it does not leave the screen, which showed an empty card.
+    // Discord's own navigation is used to land on the login screen.
+    await sleep(700);
+    const nav = findMod((m) => hasFn(m, "resetToAuthRoute"));
+    if (nav) { try { nav.resetToAuthRoute(); log("add account: login screen opened via resetToAuthRoute"); } catch (e) { log("add account: resetToAuthRoute threw: " + (e && e.message)); } }
+    else log("add account: resetToAuthRoute module not found");
+  }
   setTimeout(() => { clearTimeout(timer); safe(release); log("add account: logout requests held back: " + hits); }, 6000);
   if (!done) { log("add account: nothing logged out, login screen not opened"); return false; }
   if (oldToken && oldId) pendingOld = { id: oldId, token: oldToken };
