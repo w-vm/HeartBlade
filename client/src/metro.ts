@@ -129,3 +129,6 @@ export function forEachLoaded(cb: (exports: any, id: number) => void) {
 export const candidatesOf = candidates;
 
 export const moduleCount = () => registry.size;
+
+/** [id, exports] of every module that is already initialised (never initialises anything). */
+export const loadedEntries = (): Array<[number, any]> => [...exportsOf(false)];

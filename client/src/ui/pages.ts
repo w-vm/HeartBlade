@@ -10,6 +10,7 @@ import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, install
 import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, HeaderButton, Check, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
+import { ConsolePage } from "./console";
 
 export const PAGE_ROUTE = "HEARTBLADE_PAGE";
 
@@ -386,63 +387,6 @@ function LogsPage(props: any) {
           : [Row({ title: native.hasPrefsApi() ? "No log lines yet." : "Needs the latest HeartBlade.deb", center: true })],
       }),
     ],
-  });
-}
-
-// ---- console ------------------------------------------------------------------------------------------------
-
-interface Entry { code: string; out: string; err?: boolean; }
-
-function show(v: any): string {
-  try {
-    if (v === undefined) return "undefined";
-    if (typeof v === "string") return JSON.stringify(v);
-    if (typeof v === "function") return String(v).slice(0, 240);
-    if (v && typeof v === "object") {
-      const seen = new Set<any>();
-      const s = JSON.stringify(v, (_k, x) => { if (typeof x === "function") return "[Function]"; if (x && typeof x === "object") { if (seen.has(x)) return "[Circular]"; seen.add(x); } return x; }, 1);
-      return (s ?? String(v)).slice(0, 4000);
-    }
-    return String(v);
-  } catch { try { return String(v); } catch { return "[unprintable]"; } }
-}
-
-function ConsolePage(_props: any) {
-  const { useState } = RX();
-  const { View, Text } = RN(); const P = palette();
-  const [code, setCode] = useState("");
-  const [history, setHistory] = useState([] as Entry[]);
-  const push = (e: Entry) => setHistory((hs: Entry[]) => [e, ...hs].slice(0, 30));
-
-  const run = () => {
-    const src = code.trim();
-    if (!src) return;
-    let res: any;
-    try { res = (0, eval)(src); } catch (e: any) { push({ code: src, out: String(e?.message ?? e), err: true }); return; }
-    if (res && typeof res.then === "function") res.then((v: any) => push({ code: src, out: show(v) }), (e: any) => push({ code: src, out: String(e?.message ?? e), err: true }));
-    else push({ code: src, out: show(res) });
-  };
-
-  return Screen({
-    children: [
-      Group({
-        title: "JS console",
-        footer: "Runs in Discord’s own JS engine with full access. Try  __hb.version  or  __hb.metro.findByProps('dispatch')",
-        children: [
-          Field({ value: code, onChange: setCode, placeholder: "Type JavaScript…", multiline: true, mono: true, minHeight: 90 }),
-          Row({ title: "Run", accent: true, center: true, onPress: run }),
-          history.length ? Row({ title: "Clear output", center: true, onPress: () => setHistory([]) }) : null,
-        ],
-      }),
-      history.length
-        ? Group({
-          title: "Output",
-          children: history.map((e) => h(View, { style: { paddingHorizontal: 14, paddingVertical: 10 } },
-            h(Text, { style: { color: P.muted, fontSize: 12, fontFamily: "Menlo" }, numberOfLines: 3 }, `> ${e.code}`),
-            h(Text, { selectable: true, style: { color: e.err ? P.danger : P.text, fontSize: 12.5, fontFamily: "Menlo", marginTop: 4, lineHeight: 17 } }, e.out))),
-        })
-        : null,
-    ].filter(Boolean),
   });
 }
 

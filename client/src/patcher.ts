@@ -38,7 +38,7 @@ function getSlot(obj: any, key: string): Slot {
   };
   Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(orig));
   (wrapped as any).__hbOriginal = orig;
-  // Like Rain's patcher (sublimation): defineProperty first. A plain `obj[key] = fn` is silently ignored in sloppy
+  // defineProperty first. A plain `obj[key] = fn` is silently ignored in sloppy
   // mode when Metro/Babel exposed the export as a getter-only accessor, which made the patch look installed but never run.
   let enumerable = true;
   try { enumerable = Object.getOwnPropertyDescriptor(obj, key)?.enumerable ?? true; } catch { /* ignore */ }

@@ -1,6 +1,7 @@
 import * as metro from "./metro";
 import { scoped } from "./patcher";
 import * as native from "./native";
+import { dev } from "./dev";
 import * as kit from "./ui/kit";
 import { log, warn, error } from "./log";
 
@@ -39,6 +40,7 @@ export function createApi(id: string, name: string) {
     version: __HB_VERSION__,
     patcher,
     storage,
+    dev,
     metro: {
       find: metro.find, findAll: metro.findAll,
       findByProps: metro.findByProps, findByName: metro.findByName, findByStoreName: metro.findByStoreName,

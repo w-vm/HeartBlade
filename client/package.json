@@ -1,12 +1,12 @@
 {
   "name": "heartblade-client",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
   "description": "Heartblade JS runtime injected into Discord's Hermes engine",
   "scripts": {
     "build": "node build.mjs",
     "check": "tsc --noEmit",
-    "test": "node build.mjs && node test/harness.mjs"
+    "test": "node build.mjs && node test/harness.mjs && node test/ui.mjs && node test/dev.mjs"
   },
   "devDependencies": {
     "esbuild": "0.24.0",

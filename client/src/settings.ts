@@ -7,7 +7,7 @@ import { LogoImage } from "./ui/kit";
 import { setDiagHooks } from "./diag";
 
 /**
- * Adds a "HeartBlade" row to the mobile Discord settings screen (same idea as Rain's settings/patches/tabs.tsx):
+ * Adds a "HeartBlade" row to the mobile Discord settings screen:
  *   1. SETTING_RENDERER_CONFIG (key -> row definition) is replaced by an accessor that returns the original plus our row.
  *   2. createList({ sections: [{ label, settings: [keys] }] }) (SettingBuilders) gets an "after" hook that splices an
  *      extra section into the overview screen's section array.

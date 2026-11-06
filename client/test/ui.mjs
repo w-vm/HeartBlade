@@ -329,7 +329,13 @@ await type("Type JavaScript…", "1 + 2"); await press("Run");
 assert.ok(has("> 1 + 2") && texts(tree).includes("3"), "console evaluates");
 await type("Type JavaScript…", "throw new Error('nope')"); await press("Run");
 assert.ok(has("nope"), "console shows errors");
-await type("Type JavaScript…", "__hb.version"); await press("Run"); assert.ok(has(JSON.stringify(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version)), "__hb is available");
+await type("Type JavaScript…", "__hb.version"); await press("Run"); assert.ok(has(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version), "__hb is available");
+// console keeps its state when the page is left, and exposes the dev tools + Copy
+await type("Type JavaScript…", "dev.names('zzzz')"); await press("Run");
+assert.ok(has("(nothing found)"), "dev tools are in the console");
+open("console", "JS console");
+assert.ok(has("> 1 + 2") && has("(nothing found)"), "console output survives leaving the page");
+assert.ok(has("Copy all") && has("Copy"), "copy buttons exist");
 
 await mount(Root, { navigation: nav, route: {} });
 await press("Source code"); assert.deepEqual(opened, ["https://github.com/w-vm/HeartBlade"]);
