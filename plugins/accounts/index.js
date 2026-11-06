@@ -319,23 +319,45 @@ async function checkOldAccount() {
   if (!v.ok) say("Add account", "The previous account's saved login no longer works (Discord ended that session). Add it again with /login or its token.");
 }
 
+// Discord revokes the session on its server when logout() runs. The old hold only patched the REST module's post(), and the log
+// proved it never caught the request ("logout request held back" was never printed, the old token came back invalid every time).
+// So now: 1) the request is held at every layer (REST module, fetch, XMLHttpRequest), 2) the local-only logoutInternal() is tried
+// FIRST (it clears the session on the device without calling the server), logout() is only the fallback.
+function armLogoutHold(onHit) {
+  const undo = [];
+  const isLogout = (u) => typeof u === "string" && u.indexOf("/auth/logout") !== -1;
+  const urlOf = (x) => safe(() => (typeof x === "string" ? x : x && (x.url || x.href || (x.toString && x.toString()))) || "", "");
+  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
+  if (http) safe(() => undo.push(hb.patcher.instead(http, "post", (args, orig) => {
+    if (safe(() => safeStringify(args[0]).indexOf("/auth/logout") !== -1, false)) { onHit("REST post"); return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" }); }
+    return orig(...args);
+  })));
+  safe(() => { const g = globalThis; if (typeof g.fetch === "function") undo.push(hb.patcher.instead(g, "fetch", (args, orig) => {
+    if (isLogout(urlOf(args[0]))) { onHit("fetch"); return Promise.resolve(safe(() => new Response(null, { status: 204 }), { ok: true, status: 204, text: async () => "", json: async () => ({}) })); }
+    return orig(...args);
+  })); });
+  safe(() => { const X = globalThis.XMLHttpRequest; if (!X || !X.prototype) return;
+    undo.push(hb.patcher.before(X.prototype, "open", function (args) { this.__hbLogout = isLogout(urlOf(args[1])); }));
+    undo.push(hb.patcher.instead(X.prototype, "send", function (args, orig) {
+      if (!this.__hbLogout) return orig(...args);
+      const x = this; onHit("XMLHttpRequest");
+      const def = (k, v) => safe(() => Object.defineProperty(x, k, { value: v, configurable: true, writable: true }));
+      def("readyState", 4); def("status", 204); def("statusText", "No Content"); def("responseText", ""); def("response", "");
+      setTimeout(() => { for (const h of ["onreadystatechange", "onload", "onloadend"]) safe(() => typeof x[h] === "function" && x[h]({ type: h.slice(2), target: x })); }, 0);
+    }));
+  });
+  return () => undo.forEach((f) => safe(f));
+}
+
 async function startAddAccount() {
   const auth = findMod((m) => hasFn(m, "logout") && hasFn(m, "switchAccountToken"));
-  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
-  if (!auth || !http) { log("add account: auth or REST module missing"); return false; }
+  if (!auth) { log("add account: auth module missing"); return false; }
   if (!(await saveCurrent(true))) { say("Add account", "The current account could not be saved first, so nothing was changed."); return true; }
   if (store.get("native")) setNative(false);                 // the multi-account patch is not needed here
   const oldToken = track(currentToken()), oldId = currentId();
-  let hold = true;
-  const release = hb.patcher.instead(http, "post", (args, orig) => {
-    if (hold && safe(() => safeStringify(args[0]).indexOf("/auth/logout") !== -1, false)) {
-      hold = false; log("add account: logout request held back, the saved token stays valid");
-      return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
-    }
-    return orig(...args);
-  });
+  let hits = 0;
+  const release = armLogoutHold((where) => { hits++; log("add account: logout request held back (" + where + "), the saved token stays valid"); });
   const timer = setTimeout(() => safe(release), 30000);
-  // Logging out must really happen, so each step is checked (the token has to disappear), and the next one is tried if it did not.
   const attempt = async (name, fn) => {
     try { const r = fn(); if (r && typeof r.catch === "function") r.catch((e) => log("add account: " + name + " rejected: " + (e && e.message))); }
     catch (e) { log("add account: " + name + " threw: " + (e && e.message)); return false; }
@@ -343,9 +365,10 @@ async function startAddAccount() {
     log("add account: " + name + (ok ? " logged this device out" : " did not log out"));
     return ok;
   };
-  let done = await attempt("logout()", () => auth.logout());
-  if (!done && typeof auth.logoutInternal === "function") done = await attempt("logoutInternal()", () => auth.logoutInternal());
-  clearTimeout(timer); safe(release);
+  let done = false;
+  if (typeof auth.logoutInternal === "function") done = await attempt("logoutInternal() (local only)", () => auth.logoutInternal());
+  if (!done) done = await attempt("logout()", () => auth.logout());
+  setTimeout(() => { clearTimeout(timer); safe(release); log("add account: logout requests held back: " + hits); }, 6000);
   if (!done) { log("add account: nothing logged out, login screen not opened"); return false; }
   if (oldToken && oldId) pendingOld = { id: oldId, token: oldToken };
   log("add account: logged out locally, Discord's login screen should be open");
