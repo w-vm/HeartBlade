@@ -414,15 +414,15 @@ function AccountSheet(props) {
 }
 
 // ---------- the button on the profile page, right under "Note" ----------
-function ProfileEntry() {
+function ProfileEntry(props) {
   try {
     const { View, Text, Image, Pressable } = RN;
     const P = kit ? kit.palette() : { text: "#f2f3f5", muted: "#b5bac1" };
     const [open, setOpen] = R.useState(false);
     R.useEffect(() => { hbOpenAccounts = () => setOpen(true); return () => { hbOpenAccounts = () => {}; }; }, []);
     const cur = listAccounts().find((a) => a.id === currentId());
-    // Only on your own profile page (its "Edit Profile" button was drawn a moment ago); on other people's profiles nothing shows.
-    if (!(ownSeenAt && Date.now() - ownSeenAt < 90000)) return open ? R.createElement(AccountSheet, { onClose: () => setOpen(false) }) : null;
+    // Only on your own profile (the Note card gets the profile's user id); on other people's profiles nothing shows.
+    if (!props || !props.userId || String(props.userId) !== String(currentId())) return open ? R.createElement(AccountSheet, { onClose: () => setOpen(false) }) : null;
     return R.createElement(View, { style: { marginTop: 16 } },
       R.createElement(Pressable, { onPress: () => setOpen(true), style: ({ pressed }) => ({ flexDirection: "row", alignItems: "center", minHeight: 64, paddingHorizontal: 16, borderRadius: 16, backgroundColor: pressed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)" }) },
         cur ? R.createElement(Image, { source: { uri: avatarUrl(cur) }, style: { width: 36, height: 36, borderRadius: 18, marginRight: 12 } }) : null,
@@ -434,71 +434,43 @@ function ProfileEntry() {
   } catch (e) { return null; }
 }
 
-// Discord's component names are minified (no name could be matched), and the Note card is its own component, so its label
-// is invisible to the parent. So the label itself is the anchor: the element that holds the text is marked, every element
-// created after it that contains a marked element is marked too, and our button is attached to the topmost one created in that
-// render (the root of the Note card). Each level unwraps the level below, so only one button ends up under the card.
-const NOTE_RE = /^note\b.*only visible to you/i;
-const noteMarked = new WeakSet();        // elements that contain the Note label somewhere inside
-const wrapped = new WeakMap();           // fragment we made -> the element it wraps
-let ownSeenAt = 0, inWrap = false;
+// The Note card on a profile page is a component named UserProfileNote (found with the console: dev.tree.find('only visible to you')).
+// We wrap that component: whatever it renders, our button is rendered right after it, so it sits directly under the Note card.
+// The button only shows on your own profile (props.userId is your id). The module may not be loaded yet when the plugin starts,
+// so we also listen for modules that initialise later.
+let ownSeenAt = 0;
 const stats = { leaf: 0, wraps: 0, edit: 0 };
-const isNoteText = (s) => typeof s === "string" && s.length >= 12 && s.length <= 60 && NOTE_RE.test(s);
-const isObj = (v) => !!v && typeof v === "object";
-function hasNoteText(props, kids) {
-  if (isObj(props)) for (const k in props) { const v = props[k]; if (typeof v === "string" ? isNoteText(v) : (Array.isArray(v) && v.some(isNoteText))) return true; }
-  for (const c of kids) if (isNoteText(c) || (Array.isArray(c) && c.some(isNoteText))) return true;
-  return false;
+const NOTE_COMPONENT = "UserProfileNote";
+const patchedNote = new WeakSet();
+
+function isNoteModule(ex) {
+  return !!ex && (typeof ex === "object" || typeof ex === "function") && safe(() => typeof ex.default === "function" && ex.default.name === NOTE_COMPONENT, false);
 }
-const markedVal = (v) => isObj(v) && (noteMarked.has(v) || (Array.isArray(v) && v.some((x) => isObj(x) && noteMarked.has(x))));
-function containsMarked(props, kids) {
-  if (isObj(props)) for (const k in props) { const v = props[k]; if (isObj(v) && markedVal(v)) return true; }
-  return kids.some(markedVal);
+
+function patchNoteModule(ex, un) {
+  if (patchedNote.has(ex)) return true;
+  patchedNote.add(ex);
+  try {
+    un.push(hb.patcher.after(ex, "default", (args, ret) => {
+      try {
+        stats.wraps++;
+        const uid = args && args[0] && args[0].userId;
+        return R.createElement(R.Fragment, null, ret, R.createElement(ProfileEntry, { key: "hb-account-manager", userId: uid }));
+      } catch (e) { return ret; }
+    }));
+    log("profile: " + NOTE_COMPONENT + " patched, the button will sit under the Note card");
+    return true;
+  } catch (e) { log("profile: could not patch " + NOTE_COMPONENT + ": " + scrub(e && e.message)); return false; }
 }
-const unwrapOne = (x) => (isObj(x) && wrapped.has(x) ? wrapped.get(x) : x);
-function unwrapVal(v) {
-  if (Array.isArray(v)) { let hit = false; const o = v.map((x) => { const u = unwrapOne(x); if (u !== x) hit = true; return u; }); return hit ? o : v; }
-  return unwrapOne(v);
-}
-const isEditText = (s) => s === "Edit Profile";
-function sawEdit(args) {
-  const p = args[1];
-  if (isEditText(args[2]) || (isObj(p) && (isEditText(p.children) || isEditText(p.label) || isEditText(p.title)))) { ownSeenAt = Date.now(); if (!stats.edit++) log("own profile page seen (Edit Profile)"); }
-}
+
 function patchProfileEntry(un) {
-  const before = (args) => {
-    if (inWrap) return;
-    let out = null;
-    for (let i = 2; i < args.length; i++) { const u = unwrapVal(args[i]); if (u !== args[i]) { out = out || args.slice(); out[i] = u; } }
-    const p = args[1];
-    if (isObj(p)) {
-      let np = null;
-      for (const k in p) { const v = p[k]; if (isObj(v)) { const u = unwrapVal(v); if (u !== v) (np = np || Object.assign({}, p))[k] = u; } }
-      if (np) { out = out || args.slice(); out[1] = np; }
-    }
-    sawEdit(out || args);
-    return out || undefined;
-  };
-  const after = (args, ret) => {
-    if (inWrap || !isObj(ret) || !isObj(ret.props)) return;
-    const kids = args.slice(2);
-    const leaf = hasNoteText(args[1], kids);
-    if (!leaf && !containsMarked(args[1], kids)) return;
-    if (leaf && !stats.leaf++) log("Note label seen, attaching the button above it in the tree");
-    inWrap = true;
-    try {
-      const frag = R.createElement(R.Fragment, ret.key != null ? { key: ret.key } : null, ret, R.createElement(ProfileEntry, { key: "hb-account-manager" }));
-      wrapped.set(frag, ret); noteMarked.add(frag); noteMarked.add(ret);
-      stats.wraps++;
-      return frag;
-    } finally { inWrap = false; }
-  };
-  safe(() => un.push(hb.patcher.before(R, "createElement", before)));
-  safe(() => un.push(hb.patcher.after(R, "createElement", after)));
-  log("profile hook active");
-  const report = (when) => log("profile hook " + when + ": note label seen " + stats.leaf + "x, levels wrapped " + stats.wraps + ", own profile " + (ownSeenAt ? "seen" : "not seen"));
-  setTimeout(() => safe(() => report("after 20s")), 20000);
-  setTimeout(() => safe(() => report("after 60s")), 60000);
+  const loaded = hb.metro.findAllLoaded || hb.metro.findAll;
+  const hits = safe(() => loaded((m) => isNoteModule(m)), []) || [];
+  hits.forEach((m) => patchNoteModule(m, un));
+  // not loaded yet: patch it the moment its module initialises (before the profile screen can render it)
+  if (hb.metro.onModuleInit) un.push(hb.metro.onModuleInit((id, ex) => { safe(() => { if (isNoteModule(ex)) patchNoteModule(ex, un); }); }));
+  log("profile hook active (" + hits.length + " module(s) patched now)");
+  setTimeout(() => safe(() => log("profile hook after 30s: wrapped renders " + stats.wraps)), 30000);
 }
 
 // One-time dump of the multi-account functions Discord has (helps when a flow is not found).

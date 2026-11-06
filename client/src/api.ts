@@ -42,7 +42,7 @@ export function createApi(id: string, name: string) {
     storage,
     dev,
     metro: {
-      find: metro.find, findAll: metro.findAll,
+      find: metro.find, findAll: metro.findAll, findLoaded: metro.findLoaded, findAllLoaded: metro.findAllLoaded,
       findByProps: metro.findByProps, findByName: metro.findByName, findByStoreName: metro.findByStoreName,
       byProps: metro.byProps, byName: metro.byName, byStoreName: metro.byStoreName,
       onModuleInit: metro.onModuleInit,
