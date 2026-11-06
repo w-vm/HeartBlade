@@ -297,7 +297,7 @@ function AccountsContent(props) {
       R.createElement(Group, { title: "Accounts", footer: "Tap to switch. Long press to remove. Tokens are encrypted." }, rows.length ? rows : [R.createElement(Row, { key: "none", title: "No accounts yet", subtitle: "Use Save or Add below.", center: true })]),
       R.createElement(Group, { title: "Add" }, [
           R.createElement(Row, { key: "cur", title: "Save current account", chevron: true, onPress: () => saveCurrent().then((ok) => { if (ok) bump(); }) }),
-          R.createElement(Row, { key: "off", title: "Add account (Discord login)", chevron: true, onPress: () => { if (!startAddAccount()) say("Add account", "Could not open Discord's login window on this version."); } }),
+          R.createElement(Row, { key: "off", title: "Add account (Discord login)", chevron: true, onPress: () => { startAddAccount().then((ok) => { if (!ok) say("Add account", "Could not open Discord's login window on this version."); }); } }),
           R.createElement(Row, { key: "tok", title: "Add with token", chevron: true, onPress: () => addByToken().then((ok) => { if (ok) bump(); }) }),
           R.createElement(SwitchRow, { key: "nat", title: "Native multi-account", subtitle: "Enable email/password login.", on: !!store.get("native"), onChange: (v) => { setNative(v); if (v) say("Manager", "Native login enabled."); } }),
       ]));
@@ -357,14 +357,41 @@ function dumpAddFlow() {
   }));
 }
 
-function startAddAccount() {
+// Discord's navigation module (pushModal / getOpenModalKey / resetToAuthRoute) and the key of its login modal, found with the log dump.
+async function openLoginViaNav() {
+  const nav = findMod((m) => hasFn(m, "pushModal") && hasFn(m, "getOpenModalKey"));
+  const keys = findMod((m) => safe(() => typeof m.MULTI_ACCOUNT_LOGIN_MODAL_KEY === "string", false));
+  if (!nav || !keys) { log("login modal: navigation module " + (nav ? "ok" : "missing") + ", key module " + (keys ? "ok" : "missing")); return false; }
+  const K = keys.MULTI_ACCOUNT_LOGIN_MODAL_KEY;
+  // The exact argument of pushModal is not known, so each shape is tried and verified (the open modal key must become K).
+  const shapes = [{ key: K }, { name: K }, { key: K, params: {} }, { key: K, modal: { key: K } }];
+  for (let i = 0; i < shapes.length; i++) {
+    try { nav.pushModal(shapes[i]); } catch (e) { log("login modal shape " + i + " threw: " + (e && e.message)); continue; }
+    await sleep(600);
+    const open = safe(() => nav.getOpenModalKey(), null);
+    log("login modal shape " + i + " -> open key: " + String(open));
+    if (open === K) return true;
+    if (open) safe(() => nav.popModal());
+  }
+  // Last resort: Discord's own login screen (your current account is saved first and stays logged in).
+  if (hasFn(nav, "resetToAuthRoute")) {
+    const yes = await confirmAsk("Add account", "Open Discord's login screen? Your current account stays saved here. Log in with the new account, then switch back from Account Manager any time.", "Open login");
+    if (!yes) return true;
+    try { nav.resetToAuthRoute(); log("login opened via resetToAuthRoute"); return true; } catch (e) { log("resetToAuthRoute failed: " + (e && e.message)); }
+  }
+  return false;
+}
+
+async function startAddAccount() {
   if (!store.get("native")) setNative(true);                 // makes Discord's own multi-account flow available
+  await saveCurrent(true);
   const cands = addFlowCandidates();
   log("add-account candidates: " + (cands.map((c) => c.k).join(", ") || "none"));
   for (const c of cands) {
     try { const f = c.m[c.fn || c.k]; const r = f.call(c.m); if (r && typeof r.catch === "function") r.catch((e) => log("add flow " + c.k + " rejected: " + (e && e.message))); log("add flow started via " + c.k); return true; }
     catch (e) { log("add flow " + c.k + " failed: " + (e && e.message)); }
   }
+  if (await openLoginViaNav()) return true;
   dumpAddFlow();
   return false;
 }
@@ -423,9 +450,8 @@ function AccountSheet(props) {
   };
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
   const add = async () => {
-    await saveCurrent(true);                                  // keep the account you are leaving
     props.onClose(); await sleep(350);
-    if (!startAddAccount()) say("Add account", "Could not open Discord's login window yet. Use “Add with token” for now. Details were written to the log.");
+    if (!(await startAddAccount())) say("Add account", "Could not open Discord's login window yet. Use “Add with token” for now. Details were written to the log.");
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
