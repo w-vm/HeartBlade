@@ -1,4 +1,4 @@
-// Account Manager v0.5.7 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.5.8 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -301,59 +301,41 @@ const safeStringify = (obj) => {
   } catch (e) { return ""; }
 };
 
-// ---------- "+" : Discord's own login page in a pop-up window; the current account is never logged out ----------
-// A WebView opens discord.com/login (private, no saved web session). When the login succeeds the page's token is read,
-// checked, saved as a new account and switched to. The old account stays saved and valid because nothing is logged out.
-const LOGIN_JS = '(function(){ if(window.__hbTok) return; window.__hbTok=true; var sent="";' +
-  'function post(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}' +
-  'function fromLS(){try{var f=document.createElement("iframe");f.style.display="none";document.body.appendChild(f);var t=f.contentWindow.localStorage.getItem("token");f.remove();return t?JSON.parse(t):null;}catch(e){return null;}}' +
-  'function fromWebpack(){try{var m;window.webpackChunkdiscord_app.push([[Symbol()],{},function(r){for(var k in r.c){var e=r.c[k].exports;if(e&&e.default&&typeof e.default.getToken==="function"){var t=e.default.getToken();if(t)m=t;}}}]);return m||null;}catch(e){return null;}}' +
-  'setInterval(function(){var t=fromLS()||fromWebpack();if(typeof t==="string"&&t!==sent){sent=t;post({hbToken:t});}},1200);})(); true;';
-const LOGIN_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-let webViewComp;
-function findWebView() {
-  if (webViewComp !== undefined) return webViewComp;
-  const isComp = (x) => !!x && (typeof x === "function" || (typeof x === "object" && !!x.$$typeof));
-  const nameOk = (x) => /webview/i.test(safe(() => String(x.displayName || x.name || ""), ""));
-  // Only the real native web view is used: Discord's own wrappers take other props and crash ("Invalid URL: undefined").
-  let comp = safe(() => RN.requireNativeComponent("RNCWebView"), null);
-  let via = "native RNCWebView";
-  if (!isComp(comp)) { comp = safe(() => RN.UIManager && RN.UIManager.getViewManagerConfig && RN.UIManager.getViewManagerConfig("RNCWebView") ? RN.requireNativeComponent("RNCWebViewManager") : null, null); via = "RNCWebViewManager"; }
-  if (!isComp(comp)) { log("add account: no native web view (RNCWebView) in this Discord build"); comp = null; }
-  else log("add account: web view via " + via);
-  return (webViewComp = comp);
-}
-
-class LoginBoundary extends R.Component {
-  constructor(p) { super(p); this.state = { bad: false }; }
-  static getDerivedStateFromError() { return { bad: true }; }
-  componentDidCatch(e) { log("add account: login view error: " + (e && e.message)); safe(() => this.props.onFail(e)); }
-  render() { return this.state.bad ? null : this.props.children; }
-}
-
-function AddLogin(props) {
-  const { View, Text, Pressable, Modal, ActivityIndicator } = RN; const C = colors();
-  const WV = findWebView();
-  const [loading, setLoading] = R.useState(true);
-  const done = R.useRef(false);
-  const onMessage = (e) => {
-    if (done.current) return;
-    const d = safe(() => JSON.parse(e.nativeEvent.data), null);
-    if (d && typeof d.hbToken === "string") { done.current = true; props.onToken(d.hbToken); }
+// ---------- "+" : log in with email + password (Discord's own login request); nothing is logged out ----------
+// Discord's own REST layer sends the request (same headers / captcha handling as its login screen). The account that
+// answers is saved next to the current one, so the old account stays valid: no logout ever happens.
+async function loginWithPassword() {
+  const login = await ask("Add account", "Email or phone number"); if (!login) return null;
+  const password = await ask("Add account", "Password", true); if (!password) return null;
+  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
+  const parse = (b) => { if (typeof b === "string") { try { return JSON.parse(b); } catch (e) { return null; } } return b && typeof b === "object" ? b : null; };
+  const call = async (url, body) => {
+    if (http) {
+      try { const r = await http.post({ url, body }); return { status: r.status, body: parse(r.body) }; }
+      catch (e) { if (e && e.status) return { status: e.status, body: parse(e.body) }; log("add account: http.post failed: " + (e && e.message)); }
+    }
+    try { const r = await fetch(API + url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); let b = null; try { b = await r.json(); } catch (e) {} return { status: r.status, body: b }; }
+    catch (e) { return { status: 0, body: null }; }
   };
-  return R.createElement(Modal, { visible: true, animationType: "slide", presentationStyle: "pageSheet", onRequestClose: props.onClose },
-    R.createElement(View, { style: { flex: 1, backgroundColor: C.sheet } },
-      R.createElement(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 14 } },
-        R.createElement(Text, { style: { color: C.text, fontSize: 17, fontWeight: "700" } }, "Add account"),
-        R.createElement(Pressable, { onPress: props.onClose, hitSlop: 12 }, R.createElement(Text, { style: { color: C.blue, fontSize: 16, fontWeight: "600" } }, "Cancel"))),
-      R.createElement(View, { style: { flex: 1 } },
-        WV ? R.createElement(LoginBoundary, { onFail: () => { props.onClose(); say("Add account", "The login window failed to open. Use “Add with token”."); } }, R.createElement(WV, {
-          source: { uri: "https://discord.com/login" }, style: { flex: 1 },
-          incognito: true, javaScriptEnabled: true, domStorageEnabled: true, originWhitelist: ["*"], userAgent: LOGIN_UA,
-          injectedJavaScript: LOGIN_JS, injectedJavaScriptForMainFrameOnly: false, messagingEnabled: true,
-          onMessage, onLoadEnd: () => setLoading(false),
-        })) : null,
-        loading ? R.createElement(View, { pointerEvents: "none", style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" } }, R.createElement(ActivityIndicator, { color: C.muted })) : null)));
+  const fail = (r) => {
+    const b = r.body || {};
+    log("add account: login answered " + r.status + " keys=" + Object.keys(b).join(","));
+    if (b.captcha_key || b.captcha_sitekey) return "Discord asked for a captcha. Use “Add with token” this time.";
+    if (r.status === 429) return "Rate limited, try again in a minute.";
+    if (b.errors && (b.errors.login || b.errors.password)) return "Wrong email or password.";
+    if (b.message) return String(b.message);
+    return "Login failed (HTTP " + r.status + ").";
+  };
+  let r = await call("/auth/login", { login: String(login).trim(), password, undelete: false, login_source: null, gift_code_sku_id: null });
+  let b = r.body || {};
+  if (b.mfa && b.ticket) {
+    const code = await ask("Two-factor code", "Enter the code from your authenticator app (or a backup code).");
+    if (!code) return null;
+    r = await call("/auth/mfa/totp", { code: String(code).replace(/\s/g, ""), ticket: b.ticket, login_source: null, gift_code_sku_id: null });
+    b = r.body || {};
+  }
+  if (b.token && typeof b.token === "string") return { token: b.token };
+  return { error: fail(r) };
 }
 
 // ---------- save every account that logs in (via /login, via +, or any other way) ----------
@@ -385,7 +367,6 @@ function AccountSheet(props) {
   const C = colors();
   const [, force] = R.useState(0); const bump = () => force((n) => n + 1);
   const [busy, setBusy] = R.useState("");
-  const [adding, setAdding] = R.useState(false);
   const cur = currentId();
   const accounts = listAccounts().slice().sort((a, b) => (b.id === cur ? 1 : 0) - (a.id === cur ? 1 : 0));
 
@@ -414,23 +395,25 @@ function AccountSheet(props) {
     switchTo(t).then((r) => { setBusy(""); if (r) props.onClose(); }).catch(() => setBusy(""));
   };
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
-  const add = () => {
-    if (!findWebView()) return say("Add account", "The login window is not available in this build. Use “Add with token”.");
-    setAdding(true);
+  const add = async () => {
+    if (busy) return;
+    const r = await loginWithPassword();
+    if (!r) return;
+    if (r.error) return say("Add account", r.error);
+    handleToken(r.token);
   };
   const handleToken = async (raw) => {
     setBusy("Signing in…");
     try {
       const v = await validateToken(raw);
-      if (!v.ok) { setBusy(""); setAdding(false); return say("Add account", v.reason); }
+      if (!v.ok) { setBusy(""); return say("Add account", v.reason); }
       await saveCurrent(true);
       saveAccount(v.token, v.user);
-      setAdding(false);
       if (v.user.id === currentId()) { setBusy(""); bump(); return; }
       setBusy("Switching to " + v.user.name + "…");
       const r = await switchTo(v.token);
       setBusy(""); if (r) props.onClose(); else bump();
-    } catch (e) { setBusy(""); setAdding(false); log("add account failed: " + (e && e.message)); }
+    } catch (e) { setBusy(""); log("add account failed: " + (e && e.message)); }
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
@@ -459,7 +442,6 @@ function AccountSheet(props) {
   const backdrop = ty.interpolate({ inputRange: [0, H], outputRange: [0.55, 0], extrapolate: "clamp" });
   return R.createElement(Modal, { visible: true, transparent: true, animationType: "none", statusBarTranslucent: true, onRequestClose: () => dismiss() },
     R.createElement(View, { style: { flex: 1, justifyContent: "flex-end" } },
-      adding ? R.createElement(AddLogin, { onClose: () => setAdding(false), onToken: handleToken }) : null,
       R.createElement(Animated.View, { style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "#000", opacity: backdrop } },
         R.createElement(Pressable, { onPress: () => dismiss(), style: { flex: 1 } })),
       R.createElement(Animated.View, { style: { transform: [{ translateY: ty }], backgroundColor: C.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 14, paddingBottom: 30, maxHeight: "85%" } },
