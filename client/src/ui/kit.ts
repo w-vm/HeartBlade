@@ -105,16 +105,35 @@ export function LogoImage(props: any = {}) {
 
 // ---- building blocks ----------------------------------------------------------------------------------------
 
-export function Screen(p: { children: any[]; refreshControl?: any }) {
+// While a row is being swiped sideways the page must not scroll: otherwise the screen drifts up and down under the finger.
+const scrollLocks: Array<(locked: boolean) => void> = [];
+export const lockScroll = (locked: boolean) => { const f = scrollLocks[scrollLocks.length - 1]; if (f) f(locked); };
+
+function ScreenBody(p: { content: any[] }) {
+  const { useState, useEffect, useRef } = RX();
   const { View, ScrollView } = RN(); const P = palette();
+  const [locked, setLocked] = useState(false);
+  const ref = useRef(null as any);
+  useEffect(() => {
+    // setNativeProps is immediate (same touch); the state keeps the prop correct on the next render.
+    const set = (v: boolean) => { try { ref.current?.setNativeProps?.({ scrollEnabled: !v }); } catch { /* ignore */ } setLocked(v); };
+    scrollLocks.push(set);
+    return () => { const i = scrollLocks.indexOf(set); if (i >= 0) scrollLocks.splice(i, 1); };
+  }, []);
   // The outer View paints the whole area (corners and safe areas included), so Discord's own colour never peeks through.
   return h(View, { style: { flex: 1, backgroundColor: P.bg } },
     h(ScrollView, {
+      ref,
       style: { flex: 1, backgroundColor: P.bg },
       contentContainerStyle: { padding: 16, paddingBottom: 56, backgroundColor: P.bg },
       contentInsetAdjustmentBehavior: "automatic",
       keyboardShouldPersistTaps: "handled",
-    }, ...p.children));
+      scrollEnabled: !locked,
+    }, ...p.content));
+}
+
+export function Screen(p: { children: any[]; refreshControl?: any }) {
+  return h(ScreenBody, { content: p.children });
 }
 
 export function Hero(p: { size?: number } = {}) {
@@ -219,52 +238,64 @@ export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) =>
   });
 }
 
-// react-native-gesture-handler ships inside Discord. Its Swipeable cooperates with the list's vertical scrolling and with the
-// navigator's back gesture (a plain JS PanResponder cannot), so it is used when it can be found.
-const gestureHandler = lz<any>(() => metro.findByProps("Swipeable", "GestureHandlerRootView") ?? metro.findByProps("Swipeable"));
-const swipeable = (): any => { try { const S = gestureHandler()?.Swipeable; return typeof S === "function" || (S && typeof S === "object") ? S : null; } catch { return null; } };
+let closeOpenRow: (() => void) | null = null;
 
 /**
- * iOS style swipe to delete: drag the row to the left to reveal a red button, tap it to delete.
- * Use it as a component: h(SwipeRow, {...}, row). Without gesture-handler it falls back to PanResponder + Animated,
- * and without those it just renders the row.
+ * iOS style swipe to delete: drag the row to the left to reveal a red button, tap it to delete; drag it back to the right
+ * (or tap the row) to close it. Built on PanResponder + Animated only (no gesture-handler), so it behaves the same everywhere:
+ *  - a drag only counts as a swipe when it is clearly horizontal, and then the page scroll is locked until the finger lifts;
+ *  - the row follows the finger in both directions with a soft resistance past the ends, and settles by position or flick speed;
+ *  - only one row stays open at a time.
+ * Use it as a component: h(SwipeRow, {...}, row).
  */
 export function SwipeRow(p: { onDelete: () => void; label?: string; children?: any }) {
-  const { useRef, useState } = RX();
+  const { useRef, useState, useEffect } = RX();
   const { View, Text, Pressable, Animated, PanResponder } = RN(); const P = palette();
   const W = 92;
   const label = p.label ?? "Delete";
   const x = useRef(null as any);
+  const pos = useRef(0);
+  const start = useRef(0);
   const opened = useRef(false);
   const responder = useRef(null as any);
-  const swipeRef = useRef(null as any);
   const [isOpen, setOpen] = useState(false);
 
-  const Swipeable = swipeable();
-  if (Swipeable) {
-    const action = () => h(View, { style: { width: W, backgroundColor: P.danger } },
-      h(Pressable, { onPress: () => { try { swipeRef.current?.close?.(); } catch { /* ignore */ } p.onDelete(); }, accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
-        h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, label)));
-    return h(Swipeable, { ref: swipeRef, friction: 2, overshootRight: false, rightThreshold: 40, renderRightActions: action }, p.children);
-  }
-
   if (!Animated || !PanResponder) return p.children;
-  if (!x.current) x.current = new Animated.Value(0);
+  if (!x.current) { x.current = new Animated.Value(0); try { x.current.addListener?.((e: any) => { pos.current = e.value; }); } catch { /* ignore */ } }
+
   const settle = (to: number) => {
     opened.current = to !== 0; setOpen(to !== 0);
-    try { Animated.spring(x.current, { toValue: to, useNativeDriver: true, bounciness: 0, speed: 22 }).start(); } catch { x.current.setValue(to); }
+    if (to !== 0) { if (closeOpenRow && closeOpenRow !== closer.current) closeOpenRow(); closeOpenRow = closer.current; }
+    else if (closeOpenRow === closer.current) closeOpenRow = null;
+    try { Animated.spring(x.current, { toValue: to, useNativeDriver: true, bounciness: 0, speed: 20 }).start(); } catch { x.current.setValue(to); pos.current = to; }
   };
+  const closer = useRef(null as any);
+  closer.current = () => settle(0);
+  useEffect(() => () => { if (closeOpenRow === closer.current) closeOpenRow = null; }, []);
+
   if (!responder.current) {
-    const base = () => (opened.current ? -W : 0);
-    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
+    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
+    // Past either end the row still moves, but only a third as far, like an iOS rubber band.
+    const band = (v: number) => (v > 0 ? v / 3 : v < -W ? -W + (v + W) / 3 : v);
     responder.current = PanResponder.create({
-      // Capture phase: a mostly horizontal drag is ours before the list's scroll view or a parent can claim it.
+      onStartShouldSetPanResponder: () => false,
+      // Capture phase: a clearly horizontal drag is ours before the switch, the row's button or the scroll view can claim it.
       onMoveShouldSetPanResponderCapture: horizontal,
       onMoveShouldSetPanResponder: horizontal,
       onPanResponderTerminationRequest: () => false,
-      onPanResponderMove: (_e: any, g: any) => x.current.setValue(Math.max(-W - 28, Math.min(0, base() + g.dx))),
-      onPanResponderRelease: (_e: any, g: any) => settle(base() + g.dx < -W / 2 ? -W : 0),
-      onPanResponderTerminate: () => settle(base()),
+      onPanResponderGrant: () => {
+        try { x.current.stopAnimation?.(); } catch { /* ignore */ }
+        start.current = pos.current;
+        lockScroll(true);
+      },
+      onPanResponderMove: (_e: any, g: any) => x.current.setValue(band(start.current + g.dx)),
+      onPanResponderRelease: (_e: any, g: any) => {
+        lockScroll(false);
+        const at = start.current + g.dx;
+        const open = g.vx < -0.35 ? true : g.vx > 0.35 ? false : at < -W / 2;
+        settle(open ? -W : 0);
+      },
+      onPanResponderTerminate: () => { lockScroll(false); settle(opened.current ? -W : 0); },
     });
   }
   return h(View, { style: { overflow: "hidden", backgroundColor: P.danger } },
@@ -278,7 +309,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
 }
 
 /**
- * "+" dialog: paste a link, install it, and show success or failure right inside the dialog.
+ * "+" dialog: type or paste a link, install it, and show success or failure right inside the dialog.
  * Rendered only while open, so every opening starts clean.
  */
 export function AddDialog(p: { title: string; hint: string; placeholder: string; install: (link: string) => Promise<string>; onChanged: () => void; onClose: () => void }) {
@@ -295,7 +326,6 @@ export function AddDialog(p: { title: string; hint: string; placeholder: string;
     setPhase("busy"); setMsg("");
     p.install(l).then((m) => { setMsg(m); setPhase("ok"); p.onChanged(); }, (e: any) => { error("install failed", e?.message ?? e); setMsg(String(e?.message ?? e)); setPhase("fail"); });
   };
-  const paste = () => readClipboard().then((s) => { if (s) { setLink(s.trim()); if (phase === "fail") setPhase("idle"); } });
 
   const btn = (label: string, onPress: () => void, kind: "primary" | "plain" = "plain", disabled = false) =>
     h(Pressable, { onPress, disabled, style: ({ pressed }: any) => ({ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, marginLeft: 8, opacity: disabled ? 0.5 : pressed ? 0.7 : 1, backgroundColor: kind === "primary" ? P.accent : "transparent" }) },
@@ -323,8 +353,7 @@ export function AddDialog(p: { title: string; hint: string; placeholder: string;
           style: { color: P.text, backgroundColor: P.input, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, marginTop: 14 },
         }),
         status,
-        h(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 16 } },
-          btn("Paste", paste, "plain", phase === "busy" || phase === "ok"),
+        h(View, { style: { flexDirection: "row", justifyContent: "flex-end", alignItems: "center", marginTop: 16 } },
           h(View, { style: { flexDirection: "row" } },
             btn(phase === "ok" ? "Done" : "Cancel", p.onClose),
             phase === "ok" ? null : btn(phase === "fail" ? "Retry" : "Install", run, "primary", phase === "busy" || !link.trim()))),

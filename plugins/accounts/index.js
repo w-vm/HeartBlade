@@ -1,4 +1,4 @@
-// Account Manager v0.3.6 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.7 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -160,12 +160,19 @@ function sendLocal(channelId, content) {
   return true;
 }
 
+// Copy button: shown right after /token. Tapping "Copy" puts the token on the clipboard (cleared after 60s).
+const offerCopy = (t) => safe(() => RN.Alert.alert("Token", "Tap Copy to copy your token. The clipboard is cleared after 60 seconds.", [
+  { text: "Close", style: "cancel" },
+  { text: "Copy", onPress: () => { copyText(t); } },
+]));
+
 function cmdToken(ctx) {
   const t = track(currentToken());
   const ch = safe(() => ctx.channel.id);
   if (!t) return say("Token", "Could not read token.");
   const ok = ch && safe(() => sendLocal(ch, "||" + t + "||\n" + SHINOBU_LINE), false);
-  if (!ok) { copyText(t); say("Token", "Copied (cleared after 60s)."); }
+  if (!ok) { copyText(t); say("Token", "Copied (cleared after 60s)."); return; }
+  offerCopy(t);
 }
 
 // ---------- bot avatar ----------

@@ -65,9 +65,17 @@ function shortHash(s: string): string {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
   return ("00000000" + h.toString(16)).slice(-8);
 }
+/**
+ * A GitHub page link (github.com/<owner>/<repo>/tree|blob|raw/<ref>/<path>) points at an HTML page, not at the file itself.
+ * Turn it into the raw file link so the manifest and script are read correctly.
+ */
+export function normalizeGithub(u: string): string {
+  const m = /^https?:\/\/(?:www\.)?github\.com\/([^\/\s]+)\/([^\/\s]+)\/(?:tree|blob|raw)\/([^\/\s]+)\/([^?#\s]+?)\/?(?:[?#].*)?$/i.exec(u);
+  return m ? `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}/${m[4]}` : u;
+};
 const parseUrl = (s: string): string | null => {
   const t = (s ?? "").trim();
-  return /^https?:\/\/[^\/?#\s]+/i.test(t) ? t : null;
+  return /^https?:\/\/[^\/?#\s]+/i.test(t) ? normalizeGithub(t) : null;
 };
 const hostOf = (u: string) => (/^https?:\/\/([^\/?#]+)/i.exec(u)?.[1] ?? u);
 
@@ -98,9 +106,10 @@ export function getText(url: string): Promise<string> {
 
 // ---- install ------------------------------------------------------------------------------------------------
 
-export function installPlugin(input: string): Promise<string> {
-  const url = parseUrl(input);
-  if (!url) return Promise.reject(new Error("Invalid URL"));
+interface Fetched { manifest: any; js: string; scriptUrl: string; }
+
+/** Downloads a plugin's manifest + script from a folder link, a manifest.json link or a single .js link. */
+function fetchPlugin(url: string): Promise<Fetched> {
   const last = (url.split(/[?#]/)[0].split("/").pop() ?? "");
   let manifestUrl: string | null = null;
   let scriptUrl: string;
@@ -117,19 +126,56 @@ export function installPlugin(input: string): Promise<string> {
 
   return manifestP.then((manifest: any) => {
     if (last.endsWith(".json")) scriptUrl = resolveRel(manifestUrl!, typeof manifest.main === "string" ? manifest.main : "index.js");
-    return getText(scriptUrl).then((js) => {
-      const name = typeof manifest.name === "string" ? manifest.name : null;
-      let id = sanitize(typeof manifest.id === "string" ? manifest.id : name ?? "");
-      if (!id) id = sanitize((scriptUrl.split(/[?#]/)[0].split("/").pop() ?? "plugin").replace(/\.[^.]*$/, "") + "-" + shortHash(scriptUrl));
-      if (!id) id = "plugin-" + shortHash(scriptUrl);
-      native.writeFile(`plugins/${id}/index.js`, js);
-      native.writeFile(`plugins/${id}/manifest.json`, JSON.stringify({ ...manifest, name: manifest.name ?? id }));
-      upsert("plugin", id, input);
-      markChanged();
-      log(`installed plugin ${id}`);
-      return `Installed “${manifest.name ?? id}”`;
-    });
+    return getText(scriptUrl).then((js) => ({ manifest, js, scriptUrl }));
   });
+}
+
+const writePlugin = (id: string, f: Fetched) => {
+  native.writeFile(`plugins/${id}/index.js`, f.js);
+  native.writeFile(`plugins/${id}/manifest.json`, JSON.stringify({ ...f.manifest, name: f.manifest.name ?? id }));
+};
+
+export function installPlugin(input: string): Promise<string> {
+  const url = parseUrl(input);
+  if (!url) return Promise.reject(new Error("Invalid URL"));
+  return fetchPlugin(url).then((f) => {
+    const { manifest, scriptUrl } = f;
+    const name = typeof manifest.name === "string" ? manifest.name : null;
+    let id = sanitize(typeof manifest.id === "string" ? manifest.id : name ?? "");
+    if (!id) id = sanitize((scriptUrl.split(/[?#]/)[0].split("/").pop() ?? "plugin").replace(/\.[^.]*$/, "") + "-" + shortHash(scriptUrl));
+    if (!id) id = "plugin-" + shortHash(scriptUrl);
+    writePlugin(id, f);
+    upsert("plugin", id, url);
+    markChanged();
+    log(`installed plugin ${id}`);
+    return `Installed “${manifest.name ?? id}”`;
+  });
+}
+
+export interface PluginUpdateResult { updated: string[]; current: number; failed: number; }
+
+/**
+ * Manual plugin update (the plugins page button): re-downloads every installed plugin from the link it was installed with
+ * and replaces it only when its script or version actually changed. Enabled state and saved data are kept.
+ */
+export function updatePlugins(): Promise<PluginUpdateResult> {
+  const res: PluginUpdateResult = { updated: [], current: 0, failed: 0 };
+  let chain: Promise<void> = Promise.resolve();
+  for (const e of readRegistry().filter((x) => x.type === "plugin")) {
+    const url = parseUrl(e.url);
+    if (!url) { res.failed++; continue; }
+    chain = chain.then(() => fetchPlugin(url).then((f) => {
+      const before = readMeta("plugin", e.id);
+      const same = native.readFile(`plugins/${e.id}/index.js`) === f.js && String(before.version ?? "") === String(f.manifest.version ?? "");
+      if (same) { res.current++; return; }
+      writePlugin(e.id, f);
+      if (url !== e.url) upsert("plugin", e.id, url);
+      const to = typeof f.manifest.version === "string" ? f.manifest.version : "";
+      res.updated.push(`${f.manifest.name ?? before.name}${before.version && to && before.version !== to ? ` (${before.version} to ${to})` : ""}`);
+      log(`updated plugin ${e.id}`);
+    }).catch((err: any) => { res.failed++; log(`plugin update failed for ${e.id}: ${String(err?.message ?? err)}`); }));
+  }
+  return chain.then(() => { if (res.updated.length) markChanged(); return res; });
 }
 
 export function installTheme(input: string): Promise<string> {
@@ -143,7 +189,7 @@ export function installTheme(input: string): Promise<string> {
     const name = typeof theme.name === "string" ? theme.name : "theme";
     const id = sanitize(name) ?? shortHash(input);
     native.writeFile(`themes/${id}.json`, t);
-    upsert("theme", id, input);
+    upsert("theme", id, url);
     setEnabled("theme", id, true);
     log(`installed theme ${id}`);
     return `Installed “${name}”`;
@@ -165,29 +211,4 @@ export function updateClient(): Promise<boolean> {
     markChanged();
     return true;
   });
-}
-
-/**
- * Re-downloads every installed plugin and theme from the link it was installed with (used by "Update client").
- * Enabled / disabled state and a plugin's saved data are kept; a theme is rewritten without changing which one is active.
- */
-export function updateAll(): Promise<{ ok: number; failed: number; lines: string[] }> {
-  const res = { ok: 0, failed: 0, lines: [] as string[] };
-  let chain: Promise<void> = Promise.resolve();
-  for (const e of readRegistry()) {
-    const before = readMeta(e.type, e.id);
-    const job = e.type === "plugin"
-      ? () => installPlugin(e.url).then(() => undefined)
-      : () => getText(e.url).then((t) => {
-        const th = JSON.parse(t);
-        if (!th || typeof th !== "object" || !(th.semanticColors || th.rawColors)) throw new Error("not a theme");
-        native.writeFile(`themes/${e.id}.json`, t);
-      });
-    chain = chain.then(job).then(() => {
-      res.ok++;
-      const after = readMeta(e.type, e.id);
-      res.lines.push(`${after.name}: ${before.version && after.version && before.version !== after.version ? `${before.version} to ${after.version}` : after.version ? `v${after.version} (already current)` : "refreshed"}`);
-    }, (err: any) => { res.failed++; res.lines.push(`${before.name}: failed (${String(err?.message ?? err)})`); log(`update failed for ${e.type} ${e.id}: ${String(err?.message ?? err)}`); });
-  }
-  return chain.then(() => { markChanged(); return res; });
 }

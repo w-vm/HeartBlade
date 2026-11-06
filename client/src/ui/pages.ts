@@ -6,7 +6,7 @@ import { runningPlugins, pluginSettings } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { updateState, onUpdateState, checkUpdates, clearUpdates, markClientCurrent, updatesPending, updateSummary } from "../updates";
-import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, updateAll, needsRestart, markChanged } from "../manager";
+import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, updatePlugins, needsRestart, markChanged } from "../manager";
 import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, SwipeRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
@@ -176,7 +176,20 @@ function ManagerPage(props: any) {
   const isPlugin = kind === "plugin";
   const bump = useRefresh(props);
   const [adding, setAdding] = useState(false);
+  const [upd, setUpd] = useState({ busy: false, msg: "" });
   const entries = listEntries(kind);
+
+  // Manual plugin update: re-reads each plugin from its link, installs only what changed, and says what happened.
+  const checkPluginUpdates = () => {
+    if (upd.busy) return;
+    setUpd({ busy: true, msg: "Checking…" });
+    updatePlugins().then((r) => {
+      const msg = r.updated.length
+        ? `Found an update and installed it: ${r.updated.join(", ")}. Restart Discord to apply.`
+        : r.failed && !r.current ? "Could not check (offline or the link is unavailable)." : "No update found.";
+      setUpd({ busy: false, msg }); bump();
+    }, (e: any) => setUpd({ busy: false, msg: `Could not check (${String(e?.message ?? e)})` }));
+  };
 
   const rows = entries.map((e) => {
     const m = readMeta(kind, e.id);
@@ -196,6 +209,11 @@ function ManagerPage(props: any) {
     footer: entries.length ? `Tap ${isPlugin ? "a plugin" : "a theme"} for its info${isPlugin ? " and settings" : ""}. Swipe left to delete.` : undefined,
     children: rows.length ? rows : [Row({ title: isPlugin ? "No plugins yet" : "No themes yet", subtitle: "Tap + to add one from a link.", center: true })],
   }));
+  if (isPlugin && entries.length) {
+    kids.push(Group({
+      children: [Row({ title: "Check for updates", accent: true, subtitle: upd.msg || "Looks for newer versions of your plugins and installs them.", lines: 4, onPress: checkPluginUpdates })],
+    }));
+  }
   // The dialog sits next to the screen (not inside the list), so a restart banner appearing above does not remount it.
   return h(RX().Fragment, null,
     Screen({ children: kids }),
@@ -271,19 +289,19 @@ function DeveloperPage(props: any) {
   const status = us.phase === "checking" ? "Checking for updates…"
     : us.phase === "error" ? `Could not check (${us.error ?? "offline"}). Tap to try again.`
       : us.phase === "idle" ? "Tap to check"
-        : updatesPending() ? `Update available: ${updateSummary()}. Tap Update client below.`
+        : updatesPending() ? "Update available. Tap Update client below."
           : "No new update. This is the latest version.";
   kids.push(Group({
-    title: "Updates",
-    footer: "HeartBlade checks for updates by itself when Discord starts and tells you if there is one. It never installs anything on its own.",
+    title: "Client updates",
+    footer: "HeartBlade tells you once when a new client is out. It never installs anything on its own. Plugins are updated from the Plugins page.",
     children: [
       Row({ title: "Check for updates", subtitle: status, lines: 3, accent: updatesPending(), onPress: () => { checkUpdates().then(bump, bump); bump(); } }),
       Row({
-        title: "Update client", accent: true, subtitle: `Installed: ${__HB_VERSION__}. Downloads the latest client, then re-installs every plugin and theme from its link.`,
-        onPress: () => updateClient().then(() => updateAll()).then(
-          (r: { ok: number; failed: number; lines: string[] }) => {
+        title: "Update client", accent: true, subtitle: `Installed: ${__HB_VERSION__}. Downloads the latest client. Your plugins and themes are not touched.`,
+        onPress: () => updateClient().then(
+          () => {
             clearUpdates(); markClientCurrent(); bump();
-            alert("Client updated", `${r.lines.join("\n") || "No plugins or themes installed."}\n\nRestart Discord to use the new versions.`, [{ text: "Later", style: "cancel" }, { text: "Restart", onPress: doRestart }]);
+            alert("Client updated", "Restart Discord to use the new client.", [{ text: "Later", style: "cancel" }, { text: "Restart", onPress: doRestart }]);
           },
           (e: any) => alert("Update failed", String(e?.message ?? e))),
       }),
