@@ -60,6 +60,10 @@ export function runCode(src: string) {
   } catch (e) { fail(e); }
 }
 
+let setCodeLocal: ((s: string) => void) | null = null;
+/** Put text into the code box from outside (snippets, tapping an old command). */
+function putCode(text: string) { S.code = text; try { setCodeLocal?.(text); } catch { /* ignore */ } }
+
 function useConsole() {
   const { useState, useEffect } = RX();
   const [, set] = useState(0);
@@ -81,12 +85,16 @@ const SNIPPETS: Array<[string, string, string]> = [
 export function ConsolePage(_props: any) {
   const { View, Text, Pressable } = RN(); const P = palette();
   const st = useConsole();
+  const { useState: useS, useEffect: useE } = RX();
+  const [code, setCode] = useS(S.code);
+  useE(() => { setCodeLocal = setCode; return () => { if (setCodeLocal === setCode) setCodeLocal = null; }; }, []);
+  dev.spy.mute(true); // the console's own text must never show up as a spy match
 
   const copyAll = () => copy(st.history.slice().reverse().map((e) => `> ${e.code}\n${e.out}`).join("\n\n"), "The whole console output");
   const askAndRun = (title: string, msg: string, make: (t: string) => string) => prompt(title, msg, "", (t) => { if (t.trim()) runCode(make(t.trim().replace(/'/g, "\\'"))); });
 
   const entry = (e: Entry) => h(View, { key: e.id, style: { paddingHorizontal: 14, paddingVertical: 10 } },
-    h(Pressable, { onPress: () => { st.code = e.code; emit(); }, hitSlop: 4 },
+    h(Pressable, { onPress: () => putCode(e.code), hitSlop: 4 },
       h(Text, { style: { color: P.muted, fontSize: 12, fontFamily: "Menlo" }, numberOfLines: 3 }, `> ${e.code}`)),
     h(Text, { selectable: true, style: { color: e.err ? P.danger : P.text, fontSize: 12.5, fontFamily: "Menlo", marginTop: 4, lineHeight: 17 } },
       e.out.length > 6000 ? e.out.slice(0, 6000) + `\n…(${e.out.length - 6000} more chars — tap Copy for everything)` : e.out),
@@ -97,14 +105,14 @@ export function ConsolePage(_props: any) {
       h(View, { style: { flex: 1 } }),
       h(Text, { style: { color: P.muted, fontSize: 11 } }, `${e.ms} ms`)));
 
-  return Screen({
+  const page = Screen({
     children: [
       Group({
         title: "JS console",
         footer: "Runs inside Discord’s own JS engine with full access. Supports await. The last result is $_ . Tap an old command to reuse it.",
         children: [
-          Field({ value: st.code, onChange: (t) => { st.code = t; }, placeholder: "Type JavaScript…", multiline: true, mono: true, minHeight: 90 }),
-          Row({ title: st.busy ? "Running…" : "Run", accent: true, center: true, onPress: () => runCode(st.code) }),
+          Field({ value: code, onChange: (t) => { S.code = t; setCode(t); }, placeholder: "Type JavaScript…", multiline: true, mono: true, minHeight: 90 }),
+          Row({ title: st.busy ? "Running…" : "Run", accent: true, center: true, onPress: () => runCode(S.code) }),
         ],
       }),
       Group({
@@ -120,7 +128,7 @@ export function ConsolePage(_props: any) {
       }),
       Group({
         title: "Quick commands",
-        children: SNIPPETS.map(([title, sub, code]) => Row({ title, subtitle: sub || undefined, onPress: () => { st.code = code; emit(); } })),
+        children: SNIPPETS.map(([title, sub, code]) => Row({ title, subtitle: sub || undefined, onPress: () => putCode(code) })),
       }),
       Group({
         title: st.history.length ? `Output · ${st.history.length}` : "Output",
@@ -130,4 +138,6 @@ export function ConsolePage(_props: any) {
       }),
     ],
   });
+  dev.spy.mute(false);
+  return page;
 }

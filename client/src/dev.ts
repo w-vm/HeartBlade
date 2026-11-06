@@ -139,7 +139,7 @@ interface Hit { el: any; type: any; text: string; propKeys: string[]; }
 interface Info { name: string; type: any; el: any; }
 const parentOf = new WeakMap<object, Info>();
 const hits: Hit[] = [];
-let spyOn = false; let spyFilter = ""; let spyCount = 0; const spyUndo: Array<() => void> = [];
+let muted = false; let spyOn = false; let spyFilter = ""; let spyCount = 0; const spyUndo: Array<() => void> = [];
 const TEXT_PROPS = ["title", "label", "text", "placeholder", "subtitle", "description", "accessibilityLabel", "children", "value", "name", "header", "message"];
 
 function textsOf(p: any): string[] {
@@ -179,14 +179,14 @@ function onElement(type: any, props: any, el: any, extraChildren: any[] = []) {
 function patchFactory(holder: any, key: string, jsx: boolean) {
   try {
     spyUndo.push(patcher.after(holder, key, (args, ret) => {
-      if (!spyOn) return;
+      if (!spyOn || muted) return;
       onElement(args[0], args[1], ret, jsx ? [] : args.slice(2));
     }));
   } catch { /* frozen */ }
 }
 
 export function spyStart(filter = "") {
-  spyStop(); hits.length = 0; spyCount = 0; spyFilter = filter; spyOn = true;
+  spyStop(); muted = false; hits.length = 0; spyCount = 0; spyFilter = filter; spyOn = true;
   const R = metro.findByProps("createElement", "useState");
   if (R) patchFactory(R, "createElement", false);
   for (const m of metro.findAllLoaded((e) => { try { return typeof e.jsx === "function" || typeof e.jsxs === "function" || typeof e.jsxDEV === "function"; } catch { return false; } }).slice(0, 4))
@@ -211,11 +211,12 @@ export function spyResults(max = 25) {
   }
   return new Out(lines.join("\n"));
 }
+export const spyMute = (on: boolean) => { muted = on; };
 export const spyClear = () => { hits.length = 0; return new Out("cleared"); };
 
 export const dev = {
   modules, props, names, moduleOf, where, get, fns, inspect, store, trace, traces, untrace,
-  spy: { start: spyStart, stop: spyStop, results: spyResults, clear: spyClear },
+  spy: { start: spyStart, stop: spyStop, results: spyResults, clear: spyClear, mute: spyMute },
   help: () => new Out([
     "dev.names('Profile')        components/functions by name + their module",
     "dev.modules('note')         modules with a matching export key",
