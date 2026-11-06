@@ -15,7 +15,7 @@ const DEFAULTS = {
   strike: false, colorNotes: true, showTime: true, clock: "24",                // wrap deleted text in ~~strikethrough~~
   label: "Deleted",             // line added under a deleted message
   showEditHistory: true,
-  keepLog: true, logLimit: 300, cacheLimit: 2000,
+  keepLog: true, autoClear: 0, logLimit: 300, cacheLimit: 2000,
 };
 const cfg = (k) => { const v = hb.storage.get(k); return v === undefined ? DEFAULTS[k] : v; };
 const setCfg = (k, v) => hb.storage.set(k, v);
@@ -294,6 +294,9 @@ function IdField(props) {
   });
 }
 
+// What gets copied from a log entry: a deleted message as it was; an edit as "Before / After".
+const logText = (l) => (l.kind === "edit" ? "Before: " + (l.old || "") + "\nAfter: " + (l.content || "") : l.content || "");
+
 function LoggerSettings() {
   const { View } = hb.ReactNative; const { Group, Row, SwitchRow } = kit;
   const [, force] = R.useState(0); const bump = () => force((n) => n + 1);
@@ -304,14 +307,14 @@ function LoggerSettings() {
   const list = hb.storage.get("log", []).slice().reverse().slice(0, 40);
   
   const logMenu = (l) => sheet((l.kind === "delete" ? "Deleted" : "Edited") + " · " + l.author, [
-    { label: "Copy text", run: () => copy(l.kind === "edit" ? l.old || "" : l.content || "") },
+    { label: l.kind === "edit" ? "Copy before and after" : "Copy text", run: () => copy(logText(l)) },
   ].concat(ignoreItems(l), [{ label: "Remove entry", destructive: true, run: () => { hb.storage.set("log", hb.storage.get("log", []).filter((x) => !(x.id === l.id && x.at === l.at && x.kind === l.kind))); bump(); } }]));
 
   const entries = list.length ? list.map((l, i) => R.createElement(Row, {
     key: l.id + ":" + l.at + ":" + i,
     title: (l.kind === "delete" ? "Deleted" : "Edited") + " · " + l.author + (l.bot ? " (bot)" : ""),
     subtitle: clip(oneLine(l.kind === "edit" ? "Before: " + (l.old || "") + "\nNow: " + (l.content || "") : l.content || "(no text)"), 220) + "\n" + ts(l.at) + " · " + (l.guild ? l.guild + " · #" + (l.channel || l.channelId) : (l.channel ? "DM · " + l.channel : "channel " + l.channelId)),
-    lines: 6, onPress: () => act(() => copy(l.kind === "edit" ? l.old || "" : l.content || "")), onLongPress: () => logMenu(l),
+    lines: 6, onPress: () => act(() => copy(logText(l))), onLongPress: () => logMenu(l),
   })) : [R.createElement(Row, { key: "none", title: "Nothing logged yet", center: true })];
 
   return R.createElement(View, null,
@@ -331,13 +334,14 @@ function LoggerSettings() {
     ]),
     R.createElement(Group, { title: "Storage" }, [
       sw("keepLog", "Keep a log of deleted and edited messages"),
+      cycle("autoClear", "Clear the log automatically", [[0, "Never"], [10, "Every 10 min"], [30, "Every 30 min"], [60, "Every hour"]], "Keeps the device light. Only the log is cleared, not the chat."),
       cycle("logLimit", "Log size", [[100, "100"], [300, "300"], [1000, "1000"]]),
       cycle("cacheLimit", "Messages remembered", [[500, "500"], [2000, "2000"], [5000, "5000"]], "Only messages seen while the app is open can be recovered."),
     ]),
     R.createElement(Group, { title: "Debug", footer: "Open a chat that shows a deleted or edited note, open this page, tap the row, then send the log from Developer." }, [
       R.createElement(Row, { key: "dbg", title: "Find where notes are drawn", chevron: true, onPress: () => act(debugNotes) }),
     ]),
-    R.createElement(Group, { title: "Log", footer: list.length ? "Tap to copy. Long press to ignore the user, channel or server, or remove the entry." : undefined, headerRight: list.length ? R.createElement(kit.HeaderButton, { label: "Clear", danger: true, onPress: () => ask("Clear log", "Remove every logged message?", "Clear", true).then((y) => { if (y) { hb.storage.set("log", []); bump(); } }) }) : null }, entries));
+    R.createElement(Group, { title: "Log", footer: list.length ? "Tap to copy (edits copy the text before and after). Long press to ignore the user, channel or server, or remove the entry." : undefined, headerRight: list.length ? R.createElement(kit.HeaderButton, { label: "Clear", danger: true, onPress: () => ask("Clear log", "Remove every logged message?", "Clear", true).then((y) => { if (y) { hb.storage.set("log", []); bump(); } }) }) : null }, entries));
 }
 
 function debugNotes() {
@@ -356,6 +360,14 @@ function debugNotes() {
 const undo = [];
 return {
   onLoad() {
+    // Auto-clear: wipes the stored log once the chosen time has passed since the last clear.
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const min = cfg("autoClear");
+      if (!min) { last = Date.now(); return; }
+      if (Date.now() - last >= min * 60000) { last = Date.now(); if ((hb.storage.get("log", []) || []).length) { hb.storage.set("log", []); bumpUI(); log("log cleared automatically"); } }
+    }, 15000);
+    undo.push(() => clearInterval(timer));
     // The message cache is session-only; the log is stored on the device.
     safe(() => install(undo));
   },

@@ -39,12 +39,19 @@ function useRefresh(props: any) {
   return bump;
 }
 
-const doRestart = () => {
+/** Soft refresh: Discord reloads its own JS (no need to open the app again). If nothing happens it falls back to closing the app. */
+const doRestart = (auto?: boolean) => {
+  if (reloadApp()) {
+    setTimeout(() => {                  // still running 2.5 s later: the reload did nothing
+      if (native.restartApp()) return;
+      alert("Restart manually", "Close Discord from the app switcher and open it again.");
+    }, 2500);
+    return;
+  }
   if (native.restartApp()) return;     // the tweak closes the app
-  if (reloadApp()) return;             // older .deb without restart(): reload Discord through its own native module
   alert("Restart manually", "Close Discord from the app switcher and open it again.");
 };
-const restartNow = () => confirm("Restart Discord?", "Discord will close. Open it again to apply your changes.", "Restart", doRestart);
+const restartNow = () => confirm("Refresh Discord?", "Discord reloads itself to apply your changes. You do not need to open it again.", "Refresh", () => doRestart());
 
 /** Paint the navigator's chrome (header + card behind the page) in the page colour so no Discord-coloured edges show. */
 function useChrome(props: any) {
@@ -119,7 +126,7 @@ function RootPage(props: any) {
   const si = sysInfo();
 
   const kids: any[] = [];
-  if (needsRestart()) kids.push(Banner({ text: "Changes saved. Restart Discord to apply them.", action: "Restart", onAction: restartNow }));
+  if (needsRestart()) kids.push(Banner({ text: "Changes saved. Refresh Discord to apply them.", action: "Refresh", onAction: restartNow }));
   else if (updatesPending()) kids.push(Banner({ text: `Update available: ${updateSummary()}.`, action: "Update", onAction: () => go(props, "developer", "Developer") }));
 
   // icon + name, banner, quote
@@ -193,7 +200,7 @@ function ManagerPage(props: any) {
     setUpd({ busy: true, msg: "Checking…" });
     (isPlugin ? updatePlugins : updateThemes)().then((r) => {
       const msg = r.updated.length
-        ? `Found an update and installed it: ${r.updated.join(", ")}. Restart Discord to apply.`
+        ? `Found an update and installed it: ${r.updated.join(", ")}. Use Refresh Discord to apply.`
         : r.failed && !r.current ? "Could not check (offline or the link is unavailable)." : "No update found.";
       setUpd({ busy: false, msg }); bump();
     }, (e: any) => setUpd({ busy: false, msg: `Could not check (${String(e?.message ?? e)})` }));
@@ -221,7 +228,7 @@ function ManagerPage(props: any) {
   });
 
   const kids: any[] = [];
-  if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
+  if (needsRestart()) kids.push(Banner({ text: "Refresh Discord to apply your changes.", action: "Refresh", onAction: restartNow }));
   kids.push(Group({
     title: `${isPlugin ? "Plugins" : "Themes"}${entries.length ? ` · ${entries.length}` : ""}`,
     headerRight: h(RN().View, { style: { flexDirection: "row", alignItems: "center" } },
@@ -268,7 +275,7 @@ function InfoPage(props: any) {
   const author = (m.author ?? "").trim();
 
   const kids: any[] = [];
-  if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
+  if (needsRestart()) kids.push(Banner({ text: "Refresh Discord to apply your changes.", action: "Refresh", onAction: restartNow }));
 
   kids.push(Group({
     title: kind === "plugin" ? "Plugin" : "Theme",
@@ -297,7 +304,7 @@ function DeveloperPage(props: any) {
   const safe = !!readPrefs().safeMode;
 
   const kids: any[] = [];
-  if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
+  if (needsRestart()) kids.push(Banner({ text: "Refresh Discord to apply your changes.", action: "Refresh", onAction: restartNow }));
 
   kids.push(Group({
     title: "Safety",
@@ -323,7 +330,7 @@ function DeveloperPage(props: any) {
         onPress: () => updateClient().then(
           () => {
             clearUpdates(); markClientCurrent(); bump();
-            alert("Client updated", "Restart Discord to use the new client.", [{ text: "Later", style: "cancel" }, { text: "Restart", onPress: doRestart }]);
+            alert("Client updated", "Discord refreshes now to use the new client.", [{ text: "Later", style: "cancel" }, { text: "Refresh", onPress: () => doRestart() }]);
           },
           (e: any) => alert("Update failed", String(e?.message ?? e))),
       }),
@@ -347,7 +354,7 @@ function DeveloperPage(props: any) {
     ],
   }));
 
-  kids.push(Group({ children: [Row({ title: "Restart Discord", accent: true, center: true, onPress: restartNow })] }));
+  kids.push(Group({ children: [Row({ title: "Refresh Discord", accent: true, center: true, onPress: restartNow })] }));
   return Screen({ children: kids });
 }
 

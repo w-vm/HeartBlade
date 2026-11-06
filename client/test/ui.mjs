@@ -209,7 +209,7 @@ assert.ok(!all(tree, (n) => n.type === "Image" && n.props.source?.uri?.endsWith(
 assert.ok(!texts(tree).some((s) => /[\u{1F300}-\u{1FAFF}\u{2139}\u{FE0F}]/u.test(s)), "no emojis");
 assert.ok(has("1 installed · 1 enabled"), "plugin counts");
 assert.ok(has("Active: Crimson"), "active theme name");
-assert.ok(!has("Restart Discord to apply"), "no restart banner yet");
+assert.ok(!has("Refresh Discord to apply"), "no restart banner yet");
 await press("Plugins");
 assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "plugins", title: "Plugins" }], "Plugins pushes onto Discord's navigator");
 await press("Developer"); assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "developer", title: "Developer" }]);
@@ -235,7 +235,7 @@ assert.ok(reg().some((e) => e.id === "cool-plug" && e.type === "plugin" && e.ena
 assert.ok(has("Success") && has("Installed “Cool Plug”"), "dialog reports success");
 await press("Done");
 assert.ok(!all(tree, (n) => n.type === "Modal").length, "dialog closes");
-assert.ok(has("Cool Plug") && has("Restart Discord to apply your changes."), "list + restart banner");
+assert.ok(has("Cool Plug") && has("Refresh Discord to apply your changes."), "list + restart banner");
 await toggle("Hello", false);
 assert.equal(reg().find((e) => e.id === "hello").enabled, false, "toggle persisted");
 await press("+");
@@ -298,10 +298,10 @@ for (const gone of ["Load client", "Developer bundle URL", "Shake to open", "Res
 assert.ok(has("Safe mode") && has("Update client") && !has("Update client now"), "developer page keeps the useful rows");
 await press("Update client");                         // old .deb (no prefs API): falls back to the release URL
 assert.ok(readFileSync(P("bundle.js"), "utf8").includes("default release client"), "update works without the new .deb");
-{ const a = alerts.pop(); assert.equal(a.t, "Client updated"); assert.deepEqual(a.b.map((x) => x.text), ["Later", "Restart"]); }
+{ const a = alerts.pop(); assert.equal(a.t, "Client updated"); assert.deepEqual(a.b.map((x) => x.text), ["Later", "Refresh"]); }
 await toggle("Safe mode", true); assert.equal(JSON.parse(readFileSync(P("prefs.json"), "utf8")).safeMode, true);
 await toggle("Safe mode", false);
-await press("Restart Discord");                      // old .deb has no restart(): falls back to reloading through Discord's native module
+await press("Refresh Discord");                      // old .deb has no restart(): falls back to reloading through Discord's native module
 { const a = alerts.pop(); a.b[1].onPress(); assert.equal(state.reloaded, true, "restart falls back to a reload"); assert.ok(!alerts.length, "no 'Restart manually' alert when the reload works"); }
 addNewNative();
 open("developer", "Developer");
@@ -313,8 +313,8 @@ await press("Update client");
 assert.ok(readFileSync(P("bundle.js"), "utf8").includes("release client"), "release URL used when dev URL is empty");
 alerts.length = 0;
 await press("Copy debug report"); assert.equal(state.copied, "REPORT");
-await press("Restart Discord");
-const rs = alerts.pop(); rs.b[1].onPress(); assert.equal(state.restarted, true, "restart goes through confirmation");
+await press("Refresh Discord");
+state.reloaded = false; const rs = alerts.pop(); rs.b[1].onPress(); assert.equal(state.reloaded, true, "refresh reloads Discord first, closing the app is only the fallback");
 await press("Logs"); assert.equal(navCalls.pop()[1].page, "logs");
 await press("JS console"); assert.equal(navCalls.pop()[1].page, "console");
 
