@@ -1,0 +1,192 @@
+{
+  "name": "Black",
+  "author": "wvm",
+  "version": "1.0.0",
+  "semanticColors": {
+    "BACKGROUND_PRIMARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_SECONDARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_SECONDARY_ALT": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_TERTIARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_FLOATING": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_NESTED_FLOATING": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_MOBILE_PRIMARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_MOBILE_SECONDARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_BASE_LOWEST": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_BASE_LOWER": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_BASE_LOW": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_SURFACE_HIGH": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BACKGROUND_SURFACE_HIGHEST": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_BASE_PRIMARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_BASE_SECONDARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_BASE_TERTIARY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_SURFACE_RAISED": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "BG_SURFACE_OVERLAY": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "CHAT_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "CHANNEL_TEXT_AREA_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "CHAT_INPUT_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "INPUT_BACKGROUND": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "SCROLLBAR_AUTO_TRACK": {
+      "dark": "#000000",
+      "light": "#000000"
+    },
+    "TEXT_NORMAL": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "TEXT_DEFAULT": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "TEXT_STRONG": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "HEADER_PRIMARY": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "CHANNELS_DEFAULT": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "CHANNEL_ICON": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "INTERACTIVE_NORMAL": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "INTERACTIVE_HOVER": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "INTERACTIVE_ACTIVE": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "ICON_DEFAULT": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "ICON_STRONG": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "ICON_PRIMARY": {
+      "dark": "#ffffff",
+      "light": "#ffffff"
+    },
+    "TEXT_MUTED": {
+      "dark": "#b3b3b3",
+      "light": "#b3b3b3"
+    },
+    "TEXT_SECONDARY": {
+      "dark": "#b3b3b3",
+      "light": "#b3b3b3"
+    },
+    "TEXT_TERTIARY": {
+      "dark": "#b3b3b3",
+      "light": "#b3b3b3"
+    },
+    "HEADER_SECONDARY": {
+      "dark": "#b3b3b3",
+      "light": "#b3b3b3"
+    },
+    "INTERACTIVE_MUTED": {
+      "dark": "#b3b3b3",
+      "light": "#b3b3b3"
+    },
+    "ICON_SECONDARY": {
+      "dark": "#b3b3b3",
+      "light": "#b3b3b3"
+    },
+    "ICON_TERTIARY": {
+      "dark": "#b3b3b3",
+      "light": "#b3b3b3"
+    },
+    "BACKGROUND_MODIFIER_HOVER": {
+      "dark": "#ffffff14",
+      "light": "#ffffff14"
+    },
+    "BACKGROUND_MODIFIER_ACTIVE": {
+      "dark": "#ffffff1f",
+      "light": "#ffffff1f"
+    },
+    "BACKGROUND_MODIFIER_SELECTED": {
+      "dark": "#ffffff26",
+      "light": "#ffffff26"
+    },
+    "BACKGROUND_MESSAGE_HOVER": {
+      "dark": "#ffffff0a",
+      "light": "#ffffff0a"
+    }
+  },
+  "rawColors": {}
+}
