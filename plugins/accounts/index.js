@@ -1,4 +1,4 @@
-// Account Manager v0.3.8 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.9 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -145,7 +145,7 @@ function setNative(on) {
 // ---------- /token : plain ephemeral message (long-press -> Copy Text works) ----------
 const copyText = (text) => { RN.Clipboard.setString(text); setTimeout(async () => { try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {} }, CLIP_CLEAR_MS); };
 
-const TOKEN_NOTE = "Tap **Copy**, or press and hold the hidden text to copy it. Never share it. The clipboard is cleared after 60 seconds.";
+const SHINOBU_LINE = "Hand it to no soul, lest they wear thy face\nand speak in thy name.";
 const COPY_ID = "hb_copy_token";
 let copyHooked = false;
 
@@ -193,7 +193,7 @@ function cmdToken(ctx) {
   const t = track(currentToken());
   const ch = safe(() => ctx.channel.id);
   if (!t) return say("Token", "Could not read token.");
-  const text = "**Your token** (only you can see this message)\n||" + t + "||\n" + TOKEN_NOTE;
+  const text = "||" + t + "||\n" + SHINOBU_LINE;
   const ok = ch && safe(() => sendLocal(ch, text, copyHooked), false);
   if (!ok) { copyText(t); say("Token", "Copied (cleared after 60s)."); return; }
   if (!copyHooked) offerCopy(t);
