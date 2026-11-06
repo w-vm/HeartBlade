@@ -1,4 +1,4 @@
-// Account Manager v0.4.2 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.4.3 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -489,9 +489,11 @@ function addAfterNote(list, parentType) {
 const NOTE_TYPE = /^(UserProfile|Profile|User|Mobile)?Notes?(Card|Section|Row|Container|Cell|Item|View)?$/;
 const seenNames = new Set();
 let inWrap = false, wrapLogged = false;
-function noteDiag(t) {
-  if (seenNames.size >= 60) return;
-  const n = nameOf(t); if (!n || seenNames.has(n) || !/profile|note/i.test(n)) return;
+const calls = { ce: 0, jsx: 0 };
+function noteDiag(t, via) {
+  calls[via]++;
+  if (seenNames.size >= 80) return;
+  const n = nameOf(t); if (!n || seenNames.has(n) || !/profile|note|friend|connection|membersince|orbs|about|bio/i.test(n)) return;
   seenNames.add(n); log("profile-ish component: " + n);
 }
 const isNoteType = (t) => { const n = nameOf(t); return !!n && NOTE_TYPE.test(n) && !NOT_NOTE.test(n); };
@@ -501,7 +503,7 @@ function patchProfileEntry(un) {
   const wrapCE = (args) => {
     const t = args[0];
     if (inWrap || typeof t === "string" || typeof t === "symbol" || !t) return null;
-    noteDiag(t);
+    noteDiag(t, "ce");
     if (!isNoteType(t)) return null;
     inWrap = true;
     try {
@@ -513,7 +515,7 @@ function patchProfileEntry(un) {
   const wrapJsx = (args) => {
     const t = args[0];
     if (inWrap || typeof t === "string" || typeof t === "symbol" || !t) return null;
-    noteDiag(t);
+    noteDiag(t, "jsx");
     if (!isNoteType(t)) return null;
     inWrap = true;
     try {
@@ -543,6 +545,9 @@ function patchProfileEntry(un) {
   const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
   if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", hookJsx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", hookJsx))); }
   log("profile hook active");
+  const report = (when) => log("profile hook " + when + ": createElement calls=" + calls.ce + ", jsx calls=" + calls.jsx + ", profile-ish names=" + seenNames.size + ", button " + (wrapLogged ? "added" : "not added yet"));
+  setTimeout(() => safe(() => report("after 20s")), 20000);
+  setTimeout(() => safe(() => report("after 60s")), 60000);
 }
 
 // One-time dump of the multi-account functions Discord has (helps when a flow is not found).
