@@ -338,7 +338,7 @@ function armLogoutHold(onHit) {
   return () => undo.forEach((f) => safe(f));
 }
 
-async function startAddAccount() {
+async function startAddAccount(onReady) {
   const auth = findMod((m) => hasFn(m, "logout") && hasFn(m, "switchAccountToken"));
   if (!auth) return false;
   if (!(await saveCurrent(true))) { say("Add account", "The current account could not be saved first, so nothing was changed."); return true; }
@@ -347,6 +347,7 @@ async function startAddAccount() {
   const release = armLogoutHold(() => {});
   const timer = setTimeout(() => safe(release), 30000);
   const attempt = async (fn) => {
+    safe(() => { if (onReady) { const f = onReady; onReady = null; f(); } });
     try { const r = fn(); if (r && typeof r.catch === "function") r.catch(() => {}); }
     catch (e) { return false; }
     return await waitLoggedOut(3500);
@@ -357,9 +358,8 @@ async function startAddAccount() {
   if (done && local) {
     // logoutInternal() only clears the session; unlike logout() it does not leave the screen, which showed an empty card.
     // Discord's own navigation is used to land on the login screen.
-    await sleep(150);
     const nav = findMod((m) => hasFn(m, "resetToAuthRoute"));
-    if (nav) safe(() => nav.resetToAuthRoute());
+    if (nav) { safe(() => nav.resetToAuthRoute()); setTimeout(() => safe(() => { if (!currentToken()) nav.resetToAuthRoute(); }), 350); }
   }
   setTimeout(() => { clearTimeout(timer); safe(release); }, 6000);
   if (!done) return false;
@@ -426,8 +426,10 @@ function AccountSheet(props) {
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
   const add = async () => {
     if (busy) return;
-    props.onClose();                                          // the screen changes under the sheet, so close it first
-    const ok = await startAddAccount();
+    setBusy("Preparing…");                                    // the sheet stays up while the account is saved, then closes at the moment of logout
+    const ok = await startAddAccount(() => props.onClose());
+    if (ok === true) return;
+    setBusy("");
     if (!ok) say("Add account", "Discord did not log out, so its login screen could not open. Use \u201cAdd with token\u201d for now.");
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
