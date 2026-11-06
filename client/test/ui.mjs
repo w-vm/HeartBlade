@@ -247,7 +247,7 @@ await press("Cancel");
 await press("Cool Plug");
 assert.deepEqual(navCalls.pop(), ["HEARTBLADE_PAGE", { page: "info", title: "Cool Plug", kind: "plugin", id: "cool-plug" }], "tap opens the info page (also for a plugin without settings)");
 assert.equal(alerts.length, 0, "no details alert any more");
-assert.ok(has("Swipe left to delete"), "footer explains the swipe");
+assert.ok(has("Hold to delete"), "footer explains hold-to-delete");
 const sw = all(row("Hello").children, (n) => n.type === "Switch")[0];
 assert.equal(sw.props.style.alignSelf, "center", "switch is vertically centred");
 // info page of a running plugin that exposes settings: details + its own settings + author (Discord only)
@@ -257,18 +257,15 @@ mount(Sub, { navigation: nav, route: { params: { page: "info", title: "Hello", k
 assert.ok(has("Hello settings body"), "info page renders the plugin's own settings");
 assert.ok(has("Version") && has("1.0.0") && has("Source") && has("Made by"), "info page shows details and the author");
 assert.ok(texts(tree).includes("wvmuser") && !texts(tree).includes("wvm"), "author is the Discord account only, no Instagram");
-assert.ok(!has("Remove") && !has("Details and remove"), "no remove button on the info page (swipe instead)");
+assert.ok(!has("Remove") && !has("Details and remove"), "no remove button on the info page (hold the row instead)");
 mount(Sub, { navigation: nav, route: { params: { page: "info", title: "Cool Plug", kind: "plugin", id: "cool-plug" } } });
 assert.ok(has("Cool Plug") && has("1.2.3") && texts(tree).includes("me") && !has("settings body"), "other authors are shown by name; no settings block without settings");
 open("plugins", "Plugins");
-// swipe left to delete
+// hold a row to delete it (with confirmation)
 {
-  const pan = all(tree, (n) => n.type === "AnimatedView")[0];
-  pan.props.__cfg.onPanResponderRelease(null, { dx: -120 }); await flush();
-  assert.ok(has("Delete"), "red Delete button is there");
-  await press("Delete");
-  { const c = alerts.pop(); assert.ok(/Delete Hello/.test(c.t) && c.b.some((b) => b.text === "Delete"), "delete asks for confirmation first"); assert.ok(reg().some((e) => e.id === "hello"), "nothing is removed before confirming"); c.b[1].onPress(); await flush(); }
-  assert.ok(!reg().some((e) => e.id === "hello") && reg().some((e) => e.id === "cool-plug"), "swiping the first row and tapping Delete removes only that plugin");
+  row("Hello").props.onLongPress(); await flush();
+  { const c = alerts.pop(); assert.ok(/Delete Hello/.test(c.t) && c.b.some((b) => b.text === "Delete"), "hold asks for confirmation first"); assert.ok(reg().some((e) => e.id === "hello"), "nothing is removed before confirming"); c.b[1].onPress(); await flush(); }
+  assert.ok(!reg().some((e) => e.id === "hello") && reg().some((e) => e.id === "cool-plug"), "holding the first row removes only that plugin");
   assert.ok(!has("v1.0.0"), "deleted plugin disappears from the list");
 }
 open("plugins", "Plugins");
@@ -284,6 +281,16 @@ assert.ok(has("Success"));
 await press("Done");
 assert.ok(existsSync(P("themes/neon-night.json")));
 assert.deepEqual(reg().filter((e) => e.type === "theme").map((e) => [e.id, e.enabled]), [["crimson", false], ["neon-night", true]], "one active theme");
+
+// select several themes and delete them with one confirmation
+{
+  await press("Select"); assert.ok(has("Cancel") && has("Delete (0)"), "selection mode shows Cancel and Delete (0)");
+  await press("Crimson"); await press("Neon Night");
+  assert.ok(has("Delete (2)"), "two rows selected");
+  await press("Delete (2)");
+  { const c = alerts.pop(); assert.ok(/Delete 2 themes/.test(c.t), "one confirmation for all"); assert.equal(reg().filter((e) => e.type === "theme").length, 2, "nothing removed before confirming"); c.b[1].onPress(); await flush(); }
+  assert.equal(reg().filter((e) => e.type === "theme").length, 0, "both themes removed");
+}
 
 // ===== 5. developer page =====
 open("developer", "Developer");

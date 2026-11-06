@@ -105,29 +105,15 @@ export function LogoImage(props: any = {}) {
 
 // ---- building blocks ----------------------------------------------------------------------------------------
 
-// While a row is being swiped sideways the page must not scroll: otherwise the screen drifts up and down under the finger.
-const scrollLocks: Array<(locked: boolean) => void> = [];
-export const lockScroll = (locked: boolean) => { const f = scrollLocks[scrollLocks.length - 1]; if (f) f(locked); };
-
 function ScreenBody(p: { content: any[] }) {
-  const { useEffect, useRef } = RX();
   const { View, ScrollView } = RN(); const P = palette();
-  const ref = useRef(null as any);
-  useEffect(() => {
-    // Native prop only (immediate, no re-render while a finger is down). The JSX prop never changes, so React never resets it.
-    const set = (v: boolean) => { try { ref.current?.setNativeProps?.({ scrollEnabled: !v }); } catch { /* ignore */ } };
-    scrollLocks.push(set);
-    return () => { const i = scrollLocks.indexOf(set); if (i >= 0) scrollLocks.splice(i, 1); try { set(false); } catch { /* ignore */ } };
-  }, []);
   // The outer View paints the whole area (corners and safe areas included), so Discord's own colour never peeks through.
   return h(View, { style: { flex: 1, backgroundColor: P.bg } },
     h(ScrollView, {
-      ref,
       style: { flex: 1, backgroundColor: P.bg },
       contentContainerStyle: { padding: 16, paddingBottom: 56, backgroundColor: P.bg },
       contentInsetAdjustmentBehavior: "automatic",
       keyboardShouldPersistTaps: "handled",
-      directionalLockEnabled: true,
     }, ...p.content));
 }
 
@@ -201,6 +187,20 @@ export function PlusButton(p: { onPress: () => void }) {
     h(Text, { style: { color: P.onAccent, fontSize: 20, fontWeight: "600", lineHeight: 22, marginTop: -1 } }, "+"));
 }
 
+/** Small text button for a group header (Select / Cancel / Delete). */
+export function HeaderButton(p: { label: string; onPress: () => void; danger?: boolean; disabled?: boolean }) {
+  const { Pressable, Text } = RN(); const P = palette();
+  return h(Pressable, { onPress: p.onPress, disabled: p.disabled, hitSlop: 8, style: ({ pressed }: any) => ({ paddingHorizontal: 6, opacity: p.disabled ? 0.4 : pressed ? 0.6 : 1 }) },
+    h(Text, { style: { color: p.danger ? P.danger : P.accent, fontSize: 14, fontWeight: "700" } }, p.label));
+}
+
+/** Round check mark used in selection mode. */
+export function Check(p: { on: boolean }) {
+  const { View, Text } = RN(); const P = palette();
+  return h(View, { style: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: p.on ? P.accent : P.muted, backgroundColor: p.on ? P.accent : "transparent", alignItems: "center", justifyContent: "center" } },
+    p.on ? h(Text, { style: { color: P.onAccent, fontSize: 14, fontWeight: "800", marginTop: -1 } }, "✓") : null);
+}
+
 export interface RowProps {
   title: string; subtitle?: string; value?: string; left?: any;
   onPress?: () => void; onLongPress?: () => void; chevron?: boolean; right?: any;
@@ -235,115 +235,6 @@ export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) =>
     ...p,
     right: h(Switch, { value: p.on, onValueChange: p.onChange, trackColor: { true: P.accent, false: P.sep }, ios_backgroundColor: P.sep, thumbColor: "#ffffff", style: { alignSelf: "center", margin: 0 } }),
   });
-}
-
-// The page itself reacts to drags: a horizontal drag to the right goes "back", a vertical drag moves/dismisses the card
-// the settings are shown in. While a row is open or being dragged those navigator gestures are switched off, then restored.
-let swipeNav: any = null;
-export const setSwipeNav = (nav: any) => { swipeNav = nav; };
-let gestureLocks = 0;
-function applyGestures() {
-  const on = gestureLocks === 0;
-  let n = swipeNav;
-  for (let i = 0; n && i < 4; i++) {
-    try { n.setOptions?.(on ? { gestureEnabled: true, fullScreenGestureEnabled: undefined } : { gestureEnabled: false, fullScreenGestureEnabled: false }); } catch { /* ignore */ }
-    try { n = n.getParent?.(); } catch { n = null; }
-  }
-}
-
-let closeOpenRow: (() => void) | null = null;
-
-/**
- * iOS style swipe to delete: drag the row to the left to reveal a red button and tap it to delete. Keep dragging past
- * half the row and let go to delete straight away (the confirmation still appears; if you cancel, the row stays open and
- * you can drag it back to the right, or tap it, to close it). Built on PanResponder + Animated only (no gesture-handler):
- *  - a drag only counts as a swipe when it is clearly horizontal, and then the page scroll is locked until the finger lifts;
- *  - the row never moves to the right of its resting place, and settles open or closed by position or flick speed;
- *  - only one row stays open at a time.
- * Use it as a component: h(SwipeRow, {...}, row).
- */
-export function SwipeRow(p: { onDelete: (close: () => void) => void; label?: string; children?: any }) {
-  const { useRef, useEffect } = RX();
-  const { View, Text, Pressable, Animated, PanResponder } = RN(); const P = palette();
-  const W = 92;
-  const label = p.label ?? "Delete";
-  const x = useRef(null as any);
-  const pos = useRef(0);
-  const start = useRef(0);
-  const width = useRef(0);
-  const opened = useRef(false);
-  const navLocked = useRef(false);
-  const moved = useRef(false);
-  const responder = useRef(null as any);
-  const lockNav = (on: boolean) => {
-    if (on === navLocked.current) return;
-    navLocked.current = on; gestureLocks += on ? 1 : -1; applyGestures();
-  };
-
-  if (!Animated || !PanResponder) return p.children;
-  if (!x.current) { x.current = new Animated.Value(0); try { x.current.addListener?.((e: any) => { pos.current = e.value; }); } catch { /* ignore */ } }
-
-  const settle = (to: number, velocity = 0) => {
-    opened.current = to !== 0;
-    if (to !== 0) lockNav(true); else lockNav(false);
-    if (to !== 0) { if (closeOpenRow && closeOpenRow !== closer.current) closeOpenRow(); closeOpenRow = closer.current; }
-    else if (closeOpenRow === closer.current) closeOpenRow = null;
-    // JS driver on purpose: with the native driver the value Discord reads back mid-animation can be stale, which made the next drag start from the wrong place.
-    try { Animated.spring(x.current, { toValue: to, velocity, useNativeDriver: false, bounciness: 0, speed: 16 }).start(); } catch { x.current.setValue(to); pos.current = to; }
-  };
-  const closer = useRef(null as any);
-  closer.current = () => settle(0);
-  useEffect(() => () => { if (closeOpenRow === closer.current) closeOpenRow = null; lockNav(false); }, []);
-
-  if (!responder.current) {
-    // Clearly horizontal (the finger may drift a little vertically): the row takes the drag before the page scroll does.
-    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 4 && Math.abs(g.dx) > Math.abs(g.dy);
-    // The row can follow the finger all the way to the left, but never goes right of its resting place.
-    const band = (v: number) => Math.max(-(width.current || 4000), Math.min(0, v));
-    const full = () => Math.max(W * 1.5, width.current * 0.5);
-    responder.current = PanResponder.create({
-      // While the row is open every touch on it belongs to the row (drag right = close, tap = close), nothing under it reacts.
-      onStartShouldSetPanResponderCapture: () => opened.current,
-      onStartShouldSetPanResponder: () => opened.current,
-      // Capture phase: a clearly horizontal drag is ours before the switch, the row's button or the scroll view can claim it.
-      onMoveShouldSetPanResponderCapture: horizontal,
-      onMoveShouldSetPanResponder: horizontal,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => {
-        try { x.current.stopAnimation?.(); } catch { /* ignore */ }
-        start.current = pos.current; moved.current = false;
-        lockScroll(true); lockNav(true);
-      },
-      onPanResponderMove: (_e: any, g: any) => { if (Math.abs(g.dx) > 4) moved.current = true; x.current.setValue(band(start.current + g.dx)); },
-      onPanResponderRelease: (_e: any, g: any) => {
-        lockScroll(false);
-        if (!moved.current) { settle(0); return; }                          // a plain tap on an open row only closes it
-        const at = start.current + g.dx;
-        if (at <= -full()) { settle(-W, g.vx); p.onDelete(() => settle(0)); return; }      // dragged all the way: ask to delete, row stays open if cancelled
-        // Any small drag decides by its direction: left opens the Delete button, right closes it.
-        if (g.dx < -6) settle(-W, g.vx);
-        else if (g.dx > 6) settle(0, g.vx);
-        else settle(opened.current ? -W : 0, g.vx);
-      },
-      onPanResponderTerminate: () => { lockScroll(false); settle(opened.current ? -W : 0); },
-    });
-  }
-  // The label stays next to the row's edge while the row is dragged past the button.
-  let labelStyle: any = { position: "absolute", top: 0, bottom: 0, right: 0, width: W };
-  try { if (typeof x.current.interpolate === "function") labelStyle = { ...labelStyle, transform: [{ translateX: x.current.interpolate({ inputRange: [-1200, -W, 0], outputRange: [-1200 + W, 0, 0], extrapolateRight: "clamp" }) }] }; } catch { /* plain label */ }
-  const LabelBox = typeof x.current.interpolate === "function" ? Animated.View : View;
-  return h(View, { style: { overflow: "hidden", backgroundColor: P.danger }, onLayout: (e: any) => { width.current = e?.nativeEvent?.layout?.width ?? width.current; } },
-    h(LabelBox, { style: labelStyle },
-      h(Pressable, { onPress: () => p.onDelete(() => settle(0)), accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
-        h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, label))),
-    h(Animated.View, {
-      ...responder.current.panHandlers,
-      onTouchStart: () => lockNav(true),
-      onTouchEnd: () => { setTimeout(() => { if (!opened.current) lockNav(false); }, 60); },
-      onTouchCancel: () => { setTimeout(() => { if (!opened.current) lockNav(false); }, 60); },
-      style: { backgroundColor: P.card, transform: [{ translateX: x.current }] },
-    },
-      p.children));
 }
 
 /**

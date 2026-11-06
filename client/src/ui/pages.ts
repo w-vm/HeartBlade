@@ -7,7 +7,7 @@ import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { updateState, onUpdateState, checkUpdates, clearUpdates, markClientCurrent, updatesPending, updateSummary } from "../updates";
 import { Kind, listEntries, readMeta, setEnabled, remove, installPlugin, installTheme, updateClient, updatePlugins, needsRestart, markChanged } from "../manager";
-import { RN, RX, h, palette, setSwipeNav, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, SwipeRow, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
+import { RN, RX, h, palette, Screen, Hero, Quote, Prose, SmallLines, InstagramGlyph, Group, Row, SwitchRow, HeaderButton, Check, Banner, Field, PlusButton, AddDialog, LogoImage, alert, confirm, prompt, copy, openUrl, reloadApp } from "./kit";
 import { cachedUser, loadUser, openProfile } from "./discord";
 import { sysInfo } from "../sysinfo";
 
@@ -182,6 +182,7 @@ function ManagerPage(props: any) {
   const isPlugin = kind === "plugin";
   const bump = useRefresh(props);
   const [adding, setAdding] = useState(false);
+  const [sel, setSel] = useState(null as string[] | null);
   const [upd, setUpd] = useState({ busy: false, msg: "" });
   const entries = listEntries(kind);
 
@@ -197,22 +198,36 @@ function ManagerPage(props: any) {
     }, (e: any) => setUpd({ busy: false, msg: `Could not check (${String(e?.message ?? e)})` }));
   };
 
+  const noun = isPlugin ? "plugin" : "theme";
+  const ids = entries.map((e) => e.id);
+  const chosen = sel ? sel.filter((id) => ids.includes(id)) : [];
+  const toggleSel = (id: string) => setSel((cur) => { const c = cur ?? []; return c.includes(id) ? c.filter((x) => x !== id) : c.concat(id); });
+  const deleteChosen = () => {
+    const n = chosen.length; if (!n) return;
+    confirm(`Delete ${n} ${noun}${n > 1 ? "s" : ""}?`, `The selected ${noun}s and their saved data will be removed from this device.`, "Delete", () => { chosen.forEach((id) => remove(kind, id)); setSel(null); bump(); }, true);
+  };
+
   const rows = entries.map((e) => {
     const m = readMeta(kind, e.id);
     const author = (m.author ?? "").trim();
     const sub = m.version ? `v${m.version}` : author ? undefined : e.url;
-    // Tap: info page (details, settings when the plugin has them, author). Swipe left: delete.
+    const extra = author ? h(AuthorChip, { name: author }) : undefined;
+    // Selection mode: tap toggles the check mark. Normal mode: tap opens the info page, hold deletes (after a confirmation).
+    if (sel) return Row({ left: h(Check, { on: chosen.includes(e.id) }), title: m.name, subtitle: sub, extra, lines: 1, onPress: () => toggleSel(e.id) });
     const open = () => go(props, "info", m.name, { kind, id: e.id });
-    return h(SwipeRow, { key: e.id, label: "Delete", onDelete: (close: () => void) => confirm(`Delete ${m.name}?`, `${isPlugin ? "The plugin" : "The theme"} and its saved data will be removed from this device.`, "Delete", () => { remove(kind, e.id); bump(); }, true, close) },
-      SwitchRow({ title: m.name, subtitle: sub, extra: author ? h(AuthorChip, { name: author }) : undefined, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open }));
+    const askDelete = () => confirm(`Delete ${m.name}?`, `${isPlugin ? "The plugin" : "The theme"} and its saved data will be removed from this device.`, "Delete", () => { remove(kind, e.id); bump(); }, true);
+    return SwitchRow({ title: m.name, subtitle: sub, extra, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open, onLongPress: askDelete });
   });
 
   const kids: any[] = [];
   if (needsRestart()) kids.push(Banner({ text: "Restart Discord to apply your changes.", action: "Restart", onAction: restartNow }));
   kids.push(Group({
     title: `${isPlugin ? "Plugins" : "Themes"}${entries.length ? ` · ${entries.length}` : ""}`,
-    headerRight: PlusButton({ onPress: () => setAdding(true) }),
-    footer: entries.length ? `Tap ${isPlugin ? "a plugin" : "a theme"} for its info${isPlugin ? " and settings" : ""}. Swipe left to delete.` : undefined,
+    headerRight: h(RN().View, { style: { flexDirection: "row", alignItems: "center" } },
+      sel
+        ? [h(HeaderButton, { key: "c", label: "Cancel", onPress: () => setSel(null) }), h(HeaderButton, { key: "d", label: `Delete (${chosen.length})`, danger: true, disabled: !chosen.length, onPress: deleteChosen })]
+        : [entries.length ? h(HeaderButton, { key: "s", label: "Select", onPress: () => setSel([]) }) : null, h(RN().View, { key: "p", style: { marginLeft: 8 } }, PlusButton({ onPress: () => setAdding(true) }))]),
+    footer: entries.length ? (sel ? `Tap to select, then Delete. ${chosen.length} selected.` : `Tap ${isPlugin ? "a plugin" : "a theme"} for its info${isPlugin ? " and settings" : ""}. Hold to delete, or use Select to delete several.`) : undefined,
     children: rows.length ? rows : [Row({ title: isPlugin ? "No plugins yet" : "No themes yet", subtitle: "Tap + to add one from a link.", center: true })],
   }));
   if (isPlugin && entries.length) {
@@ -485,7 +500,6 @@ export function PageScreen(props: any) {
   const params = props?.route?.params ?? {};
   const page: string = PAGES[params.page] ? params.page : "root";
   useChrome(props);
-  useEffect(() => { setSwipeNav(props?.navigation); return () => setSwipeNav(null); }, []);
   useEffect(() => { try { props?.navigation?.setOptions?.({ title: params.title ?? BRAND.name }); } catch { /* ignore */ } }, [page, params.title]);
   return h(boundary(), null, PAGES[page](props));
 }
