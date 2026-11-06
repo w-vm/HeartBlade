@@ -28,6 +28,8 @@ const isStub = (m) => safe(() => Object.prototype.hasOwnProperty.call(m, "$$load
 const store = (name) => safe(() => hb.metro.findByStoreName(name));
 const selfId = () => safe(() => store("AuthenticationStore").getId() || store("UserStore").getCurrentUser().id, null);
 const guildOf = (channelId) => safe(() => store("ChannelStore").getChannel(channelId).guild_id || store("ChannelStore").getChannel(channelId).guildId || null, null);
+const guildName = (gid) => (gid ? safe(() => store("GuildStore").getGuild(gid).name, null) : null);
+const channelName = (cid) => safe(() => { const c = store("ChannelStore").getChannel(cid); return c && (c.name || (c.rawRecipients && c.rawRecipients.map((r) => r.username).join(", ")) || (c.recipients && "DM")) || null; }, null);
 const nameOf = (a) => (a && (a.global_name || a.globalName || a.username)) || "unknown";
 
 // ---------- invisible tags: let the Text hook recognise a note and know which message it belongs to ----------
@@ -90,7 +92,7 @@ function render(e) {
 function addLog(kind, e, extra) {
   if (!cfg("keepLog")) return;
   const list = hb.storage.get("log", []);
-  list.push(Object.assign({ kind, id: e.id, channelId: e.channelId, guildId: e.guildId, authorId: e.authorId, author: e.author, bot: e.bot, content: e.content, at: Date.now() }, extra || {}));
+  list.push(Object.assign({ kind, id: e.id, channelId: e.channelId, guildId: e.guildId, authorId: e.authorId, author: e.author, bot: e.bot, content: e.content, guild: guildName(e.guildId), channel: channelName(e.channelId), at: Date.now() }, extra || {}));
   const max = cfg("logLimit"); while (list.length > max) list.shift();
   hb.storage.set("log", list);
   bumpUI();
@@ -158,13 +160,14 @@ let bypass = false;   // our own events (removing a kept message, hiding notes) 
 const send = (ev) => { bypass = true; try { dispatcher.dispatch(ev); } finally { bypass = false; } };
 
 // ---------- tapping / colouring the notes ----------
-const copy = (t) => safe(() => hb.ReactNative.Clipboard.setString(t));
+const copy = (t) => { try { if (kit && kit.copy) return kit.copy(String(t), "Text"); hb.ReactNative.Clipboard.setString(String(t)); hb.ui.alert("Copied", "Text is on your clipboard."); } catch (e) { log("copy failed: " + (e && e.message)); } };
+const act = (fn) => { try { fn(); } catch (e) { log("action failed: " + (e && e.message)); } };
 function sheet(title, items) {
   const RN = hb.ReactNative; const AS = RN.ActionSheetIOS;
   const labels = items.map((i) => i.label).concat("Cancel");
   const d = items.findIndex((i) => i.destructive);
-  if (AS && AS.showActionSheetWithOptions) AS.showActionSheetWithOptions(Object.assign({ title, options: labels, cancelButtonIndex: labels.length - 1 }, d >= 0 ? { destructiveButtonIndex: d } : {}), (i) => { const it = items[i]; if (it) safe(it.run); });
-  else RN.Alert.alert(title, undefined, items.map((i) => ({ text: i.label, style: i.destructive ? "destructive" : "default", onPress: () => safe(i.run) })).concat({ text: "Cancel", style: "cancel" }));
+  if (AS && AS.showActionSheetWithOptions) AS.showActionSheetWithOptions(Object.assign({ title, options: labels, cancelButtonIndex: labels.length - 1 }, d >= 0 ? { destructiveButtonIndex: d } : {}), (i) => { const it = items[i]; if (it) act(it.run); });
+  else RN.Alert.alert(title, undefined, items.map((i) => ({ text: i.label, style: i.destructive ? "destructive" : "default", onPress: () => act(i.run) })).concat({ text: "Cancel", style: "cancel" }));
 }
 let idsVer = 0;
 function toggleIgnore(k, id, what) {
@@ -193,22 +196,54 @@ function noteMenu(e, kind) {
   }
   sheet(kind === "delete" ? "Deleted message" : "Edited message", items.concat(ignoreItems(e)));
 }
+const describe = (v, d) => {
+  d = d || 0;
+  if (typeof v === "function") return "fn:" + (v.name || "anon");
+  if (v === null || typeof v !== "object") return typeof v === "string" ? JSON.stringify(v.slice(0, 60)) : String(v);
+  if (Array.isArray(v)) return d >= 2 ? "[…]" : "[" + v.slice(0, 4).map((x) => describe(x, d + 1)).join(", ") + "]";
+  if (d >= 2) return "{…}";
+  return "{" + safe(() => Object.keys(v), []).slice(0, 8).join(",") + "}";
+};
+const seen = {};
+const once = (k, msg) => { if (!seen[k]) { seen[k] = 1; log(msg); } };
+// Without the invisible tag (if Discord strips it) a note is recognised by its text and time.
+function entryByText(first) {
+  let hit = null;
+  for (const e of bySeq.values()) {
+    if (e.deleted && first === cfg("label") + (cfg("showTime") ? " at " + hms(e.deletedAt) : "")) hit = e;
+    else if (e.history.length && first.indexOf("Edited") === 0 && e.history.some((h) => first.indexOf("Edited" + (cfg("showTime") ? " at " + hms(h.at) : "")) === 0)) hit = e;
+  }
+  return hit;
+}
 function patchText(un) {
-  const T = safe(() => hb.ReactNative.Text, null);
-  if (!T || typeof T.render !== "function") { log("text hook: RN.Text.render not found, notes are not coloured or tappable"); return; }
-  un.push(hb.patcher.before(T, "render", (args) => {
+  const RN = hb.ReactNative; const T = safe(() => RN.Text, null);
+  const holder = !T ? null : typeof T.render === "function" ? T : (T.type && typeof T.type.render === "function" ? T.type : null);
+  if (!holder) { log("text hook: RN.Text has no render function (" + describe(T && Object.keys(T)) + "), notes are not coloured or tappable"); return; }
+  un.push(hb.patcher.before(holder, "render", (args) => { try { return textHook(args); } catch (e) { once("err", "text hook error: " + (e && e.message)); } }));
+  log("text hook on");
+}
+function textHook(args) {
+  {
     const p = args[0]; if (!p) return;
+    once("alive", "text hook: first Text render seen");
     const ch = p.children;
-    const first = typeof ch === "string" ? ch : (Array.isArray(ch) && typeof ch[0] === "string" ? ch[0] : null);
-    if (!first || (first[0] !== DEL && first[0] !== EDT)) return;
-    const m = TAG_RE.exec(first); if (!m) return;
-    const e = bySeq.get(decSeq(m[2])); const kind = m[1] === DEL ? "delete" : "edit";
-    const clean = first.slice(m[0].length);
-    const np = Object.assign({}, p, { children: typeof ch === "string" ? clean : [clean].concat(ch.slice(1)), onPress: () => noteMenu(e, kind), suppressHighlighting: true });
+    let idx = -1;
+    if (typeof ch === "string") idx = -2; else if (Array.isArray(ch)) idx = ch.findIndex((c) => typeof c === "string");
+    const first = idx === -2 ? ch : idx >= 0 ? ch[idx] : null;
+    if (!first) return;
+    const m = TAG_RE.exec(first);
+    const looks = first.indexOf("Deleted") !== -1 || first.indexOf("Edited") !== -1 || first.indexOf(cfg("label")) !== -1;
+    if (!m && !looks) return;
+    const e = m ? bySeq.get(decSeq(m[2])) : entryByText(first);
+    if (!m && !e) return;
+    const kind = m ? (m[1] === DEL ? "delete" : "edit") : (first.indexOf("Edited") === 0 ? "edit" : "delete");
+    once("match-" + kind + (m ? "-tag" : "-text"), "text hook: note matched (" + kind + (m ? ", tag" : ", by text") + "), children " + describe(ch));
+    const clean = m ? first.slice(m[0].length) : first;
+    const children = idx === -2 ? clean : ch.map((c, i) => (i === idx ? clean : c));
+    const np = Object.assign({}, p, { children, onPress: () => act(() => noteMenu(e, kind)), suppressHighlighting: true });
     if (cfg("colorNotes")) np.style = [p.style, { color: kind === "delete" ? "#f23f43" : "#f0b232" }];
     return [np, args[1]];
-  }));
-  log("text hook on");
+  }
 }
 
 function install(un) {
@@ -249,13 +284,13 @@ function LoggerSettings() {
   
   const logMenu = (l) => sheet((l.kind === "delete" ? "Deleted" : "Edited") + " · " + l.author, [
     { label: "Copy text", run: () => copy(l.kind === "edit" ? l.old || "" : l.content || "") },
-  ].concat(ignoreItems(l), [{ label: "Remove entry", destructive: true, run: () => { hb.storage.set("log", hb.storage.get("log", []).filter((x) => !(x.id === l.id && x.at === l.at))); bump(); } }]));
+  ].concat(ignoreItems(l), [{ label: "Remove entry", destructive: true, run: () => { hb.storage.set("log", hb.storage.get("log", []).filter((x) => !(x.id === l.id && x.at === l.at && x.kind === l.kind))); bump(); } }]));
 
   const entries = list.length ? list.map((l, i) => R.createElement(Row, {
     key: l.id + ":" + l.at + ":" + i,
     title: (l.kind === "delete" ? "Deleted" : "Edited") + " · " + l.author + (l.bot ? " (bot)" : ""),
-    subtitle: clip(oneLine(l.kind === "edit" ? "Before: " + (l.old || "") + "\nNow: " + (l.content || "") : l.content || "(no text)"), 220) + "\n" + ts(l.at) + " · channel " + l.channelId,
-    lines: 6, onPress: () => { copy(l.kind === "edit" ? l.old || "" : l.content || ""); safe(() => hb.ui.alert("Copied", "The message text was copied.")); }, onLongPress: () => logMenu(l),
+    subtitle: clip(oneLine(l.kind === "edit" ? "Before: " + (l.old || "") + "\nNow: " + (l.content || "") : l.content || "(no text)"), 220) + "\n" + ts(l.at) + " · " + (l.guild ? l.guild + " · #" + (l.channel || l.channelId) : (l.channel ? "DM · " + l.channel : "channel " + l.channelId)),
+    lines: 6, onPress: () => act(() => copy(l.kind === "edit" ? l.old || "" : l.content || "")), onLongPress: () => logMenu(l),
   })) : [R.createElement(Row, { key: "none", title: "Nothing logged yet", center: true })];
 
   return R.createElement(View, null,
