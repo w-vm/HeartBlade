@@ -1,4 +1,4 @@
-// Account Manager v0.3.5 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.6 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -65,9 +65,7 @@ const DEBUG = false; // shows a one-time alert with profile patch status; set fa
 const GOLD = "#F5D63D"; // Shinobu yellow (chat name color)
 const PROFILE_PRIMARY = 0xF5D63D; // profile theme colors (edit to match the gif)
 const PROFILE_SECONDARY = 0x8A6A12;
-const BIO_URL = "https://discord.com/users/233320628235665408";
-const BIO_LABEL = "@u6oa";
-const BOT_BIO = "Kakaka! Made by my master " + BIO_URL;
+const BOT_BIO = "Kakaka! Made by my master @u6oa";
 const BIRTH_MS = Date.UTC(1407, 8, 29); // displays as Sep 20, 1407 (client formats pre-1582 dates in the Julian calendar, 9 days behind)
 const BOT_BANNER = "https://images.steamusercontent.com/ugc/991240935447261386/12C1E71B9C0C1415ACBFF4263EA5855568BC62D4/?imw=1200&imh=1200&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false";
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
@@ -230,28 +228,6 @@ function patchBirthDate(un) {
   return n;
 }
 
-// ---------- bio: show the profile link as "@u6oa" (still clickable) ----------
-function patchBioLink(un) {
-  const swap = (c) => (c === BIO_URL ? BIO_LABEL : Array.isArray(c) && c.length === 1 && c[0] === BIO_URL ? [BIO_LABEL] : c);
-  const ce = (args) => {
-    const p = args[1]; const rest = args.slice(2);
-    const c = p && p.children !== undefined ? swap(p.children) : p && p.children;
-    const r2 = rest.length === 1 ? swap(rest[0]) : rest;
-    const changedProps = p && p.children !== undefined && c !== p.children;
-    const changedRest = rest.length === 1 && r2 !== rest[0];
-    if (!changedProps && !changedRest) return;
-    return [args[0], changedProps ? Object.assign({}, p, { children: c }) : p].concat(changedRest ? [r2] : rest);
-  };
-  const jx = (args) => {
-    const p = args[1]; if (!p || p.children === undefined) return;
-    const c = swap(p.children); if (c === p.children) return;
-    return [args[0], Object.assign({}, p, { children: c })].concat(args.slice(2));
-  };
-  safe(() => un.push(hb.patcher.before(R, "createElement", ce)));
-  const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
-  if (rt) { safe(() => un.push(hb.patcher.before(rt, "jsx", jx))); safe(() => un.push(hb.patcher.before(rt, "jsxs", jx))); }
-}
-
 let hbOpenAccounts = () => {};
 
 const mkCmd = (name, description, options, execute) => ({ name, untranslatedName: name, displayName: name, description, untranslatedDescription: description, displayDescription: description, applicationId: "-1", inputType: 1, type: 1, options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: o.type || 3, choices: [], autocomplete: false })), execute });
@@ -372,7 +348,6 @@ return {
     safe(() => registerCommands(undo));
     safe(() => patchAvatar(undo));
     safe(() => patchProfile(undo));
-    safe(() => patchBioLink(undo));
     if (kit) safe(() => patchSheetUI(undo));
   },
   onUnload() {
