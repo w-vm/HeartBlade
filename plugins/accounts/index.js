@@ -1,4 +1,4 @@
-// Account Manager v0.4.0 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.4.1 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -446,13 +446,38 @@ function scanNote(v, d, b) {
 }
 const isLeafText = (c) => { const p = c.props || {}; return typeof p.children === "string" || typeof p.title === "string" || typeof p.label === "string"; };
 let entryLogged = false;
+// Discord builds the Note card as its own component, so its text is not visible in the parent's props. It is found by component
+// name instead (e.g. UserProfileNoteCard); the friends / connections cards are the fallback anchor when no note component is there.
+const nameOf = (t) => safe(() => (typeof t === "string" ? t : (t.displayName || t.name || (t.type && (t.type.displayName || t.type.name)) || (t.render && (t.render.displayName || t.render.name)) || "")), "");
+const NOTE_NAME = /note/i, NOT_NOTE = /notif|notice|annot|denote|footnote|keynote/i, NOTE_OK = /profile|card|section/i;
+const ANCHOR_NAME = /(friends?|connections?|membersince|since|about|bio)\w*(card|section)$|^userprofile(friends|connections|membersince|aboutme|bio)/i;
+const seenLists = new Set();
+function diagList(list, parentType) {
+  if (seenLists.size >= 8) return;
+  const names = list.map((c) => (c && typeof c === "object" && c.type ? nameOf(c.type) : "")).filter(Boolean);
+  if (!names.some((n) => /profile/i.test(n))) return;
+  const sig = names.join(",");
+  if (seenLists.has(sig)) return;
+  seenLists.add(sig);
+  log("profile list in <" + nameOf(parentType) + ">: " + names.slice(0, 25).join(", "));
+}
 function addAfterNote(list, parentType) {
   if (!Array.isArray(list) || list.length < 2 || list.length > 40 || typeof list[0] === "string") return null;
+  if (list.some((c) => c && typeof c === "object" && c.type === ProfileEntry)) return null;
+  diagList(list, parentType);
   let at = -1; const b = { n: 40, entry: false };
+  let anchor = -1;
   for (let i = 0; i < list.length; i++) {
     const c = list[i];
-    if (c && typeof c === "object" && c.props) { if (c.type === ProfileEntry) return null; if (!isLeafText(c) && scanNote(c, 0, b)) { at = i; break; } }
+    if (c && typeof c === "object" && c.props) {
+      if (c.type === ProfileEntry) return null;
+      if (!isLeafText(c) && scanNote(c, 0, b)) { at = i; break; }
+      const nm = nameOf(c.type);
+      if (nm && NOTE_NAME.test(nm) && !NOT_NOTE.test(nm) && NOTE_OK.test(nm)) { at = i; break; }
+      if (nm && ANCHOR_NAME.test(nm)) anchor = i;
+    }
   }
+  if (at < 0) at = anchor;
   if (at < 0 || b.entry) return null;
   const out = list.slice(); out.splice(at + 1, 0, R.createElement(ProfileEntry, { key: "hb-account-manager" }));
   if (!entryLogged) { entryLogged = true; const nm = (t) => safe(() => typeof t === "string" ? t : (t.displayName || t.name || "?"), "?"); log("profile button added after <" + nm(list[at].type) + "> inside <" + nm(parentType) + ">, " + list.length + " children"); }
@@ -481,6 +506,59 @@ function patchProfileEntry(un) {
   log("profile hook active");
 }
 
+// ---------- second place: the bottom of the "Change Online Status" sheet (profile picture) ----------
+// Found by what the sheet shows: when an element is created whose children contain both "Invisible" and "Set a custom status",
+// our button is appended to those children. Cheap checks first, so ordinary renders are not slowed down.
+const SHEET_NEED = ["Set a custom status", "Invisible"];
+function scanSheet(node, found, depth, b) {
+  if (b.n-- <= 0 || depth > 6 || node == null) return;
+  if (typeof node === "string") { const i = SHEET_NEED.indexOf(node); if (i >= 0) found[i] = true; return; }
+  if (typeof node !== "object") return;
+  if (Array.isArray(node)) { for (let i = 0; i < node.length && b.n > 0; i++) scanSheet(node[i], found, depth + 1, b); return; }
+  const p = node.props; if (!p || typeof p !== "object") return;
+  for (const k in p) {
+    const v = p[k];
+    if (typeof v === "string") { const i = SHEET_NEED.indexOf(v); if (i >= 0) found[i] = true; }
+    else if (v && typeof v === "object" && (k === "children" || v.props || Array.isArray(v))) scanSheet(v, found, depth + 1, b);
+    if (b.n <= 0 || (found[0] && found[1])) break;
+  }
+}
+const hasProfileEntry = (node, d) => {
+  if (!node || typeof node !== "object" || d > 12) return false;
+  if (Array.isArray(node)) return node.some((c) => hasProfileEntry(c, d + 1));
+  return node.type === ProfileEntry || (!!node.props && hasProfileEntry(node.props.children, d + 1));
+};
+let sheetLogged = false;
+function patchSheetEntry(un) {
+  const wants = (kids) => {
+    if (kids == null || typeof kids !== "object") return false;
+    if (Array.isArray(kids) && (kids.length < 2 || kids.length > 30)) return false;
+    const f = [false, false]; scanSheet(kids, f, 0, { n: 120 });
+    return f[0] && f[1] && !hasProfileEntry(kids, 0);
+  };
+  const entry = () => R.createElement(ProfileEntry, { key: "hb-account-manager-sheet" });
+  const note = (t) => { if (!sheetLogged) { sheetLogged = true; log("status sheet button added inside <" + nameOf(t) + ">"); } };
+  safe(() => un.push(hb.patcher.before(R, "createElement", (args) => {
+    try {
+      if (args.length > 2) { const kids = args.slice(2); if (wants(kids)) { note(args[0]); return args.concat([entry()]); } }
+      else if (args[1] && args[1].children && wants(args[1].children)) {
+        const ch = args[1].children; note(args[0]);
+        return [args[0], Object.assign({}, args[1], { children: Array.isArray(ch) ? ch.concat([entry()]) : [ch, entry()] })];
+      }
+    } catch (e) {}
+    return args;
+  })));
+  const rt = safe(() => hb.metro.findByProps("jsx", "jsxs"));
+  if (rt) for (const k of ["jsx", "jsxs"]) safe(() => un.push(hb.patcher.before(rt, k, (args) => {
+    try {
+      const p = args[1];
+      if (p && p.children && wants(p.children)) { const ch = p.children; note(args[0]); return [args[0], Object.assign({}, p, { children: Array.isArray(ch) ? ch.concat([entry()]) : [ch, entry()] })].concat(args.slice(2)); }
+    } catch (e) {}
+    return args;
+  })));
+  log("status sheet hook active");
+}
+
 // One-time dump of the multi-account functions Discord has (helps when a flow is not found).
 function diagnose() {
   const names = [];
@@ -502,13 +580,14 @@ return {
     safe(() => patchAvatar(undo));
     safe(() => patchProfile(undo));
     safe(() => patchProfileEntry(undo));
+    safe(() => patchSheetEntry(undo));
     safe(() => watchLogins(undo));
     setTimeout(() => autoSave("load"), 4000);
     setTimeout(() => safe(diagnose), 6000);
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    clearTimeout(autoTimer); entryLogged = false; copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
+    clearTimeout(autoTimer); entryLogged = false; sheetLogged = false; seenLists.clear(); copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
     hbOpenAccounts = () => {};
     secrets.clear();
   },
