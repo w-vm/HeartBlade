@@ -1,4 +1,4 @@
-// Account Manager v0.5.9 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -61,7 +61,6 @@ const API = "https://discord.com/api/v9";
 const CLIP_CLEAR_MS = 60 * 1000;
 const BOT_ID = "94945620787200001"; // snowflake date = 2015-09-20 (earliest year Discord allows) -> "Member Since"
 const BOT_NAME = "HeartBlade";
-const DEBUG = false; // shows a one-time alert with profile patch status; set false when done
 const GOLD = "#F5D63D"; // Shinobu yellow (chat name color)
 const PROFILE_PRIMARY = 0xF5D63D; // profile theme colors (edit to match the gif)
 const PROFILE_SECONDARY = 0x8A6A12;
@@ -71,7 +70,6 @@ const BOT_BANNER = "https://images.steamusercontent.com/ugc/991240935447261386/1
 const BOT_AVATAR = "https://raw.githubusercontent.com/w-vm/HeartBlade/main/plugins/accounts/avatar.gif";
 
 const safe = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
-const log = (m) => safe(() => hb.logger.log("[accounts] " + m));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const kit = safe(() => hb.ui.kit);
 
@@ -126,7 +124,6 @@ async function switchTo(token) {
   catch (e) { say("Switch failed", "Error: " + scrub(e && e.message)); return false; }
   await sleep(2500);
   if (currentId() !== v.user.id) { say("Switch unclear", "Did not switch to " + v.user.name + "."); return false; }
-  log("switched account via " + mode);
   return v;
 }
 
@@ -186,7 +183,6 @@ function hookCopyButton(un) {
     onCopy(); return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
   })); hooked++; });
   copyHooked = hooked > 0;
-  log("copy button hooks: " + hooked + (exec ? " (component handler found)" : " (component handler NOT found)"));
 }
 
 // Fallback when the button cannot be hooked: a plain alert with a Copy button.
@@ -211,41 +207,36 @@ const botUriFor = (u) => (String(u).indexOf("/banners/") !== -1 ? BOT_BANNER : B
 const fixProps = (p) => { const s = p && fixSource(p.source); if (!s) return null; return Object.assign({}, p, { source: s, resizeMode: "cover", style: [p.style, { resizeMode: "cover" }] }); };
 const fixSource = (src) => { if (!src) return null; if (Array.isArray(src)) { const i = src.findIndex((x) => x && isBotUri(x.uri)); if (i < 0) return null; const c = src.slice(); c[i] = Object.assign({}, c[i], { uri: botUriFor(c[i].uri) }); return c; } return isBotUri(src.uri) ? Object.assign({}, src, { uri: botUriFor(src.uri) }) : null; };
 function patchImage(un, host, key) { let ok = false; safe(() => { const target = host[key]; if (target && typeof target.render === "function") { un.push(hb.patcher.before(target, "render", (args) => { const np = fixProps(args[0]); if (np) return [np, args[1]]; })); ok = true; } else if (typeof target === "function") { un.push(hb.patcher.before(host, key, (args) => { const np = fixProps(args[0]); if (np) return [np].concat(args.slice(1)); })); ok = true; } }); return ok; }
-function patchAvatar(un) { if (!BOT_AVATAR) return; const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" }; for (const n of Object.keys(names)) { const m = findMod((x) => hasFn(x, n)); if (!m) continue; safe(() => un.push(hb.patcher.after(m, n, (args, ret) => { if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR; }))); } const img = patchImage(un, RN, "Image"); log("avatar hooks: image=" + img); }
+function patchAvatar(un) { if (!BOT_AVATAR) return; const names = { getUserAvatarURL: "url", getAvatarURL: "url", getUserAvatarSource: "src", getAvatarSource: "src" }; for (const n of Object.keys(names)) { const m = findMod((x) => hasFn(x, n)); if (!m) continue; safe(() => un.push(hb.patcher.after(m, n, (args, ret) => { if (args[0] && args[0].id === BOT_ID) return names[n] === "src" ? { uri: BOT_AVATAR } : BOT_AVATAR; }))); } patchImage(un, RN, "Image"); }
 
 // ---------- bot profile: banner + colors ----------
 function patchProfile(un) {
   const st = safe(() => hb.metro.findByStoreName("UserProfileStore"));
   const targets = []; if (st) { targets.push(st); const p = safe(() => Object.getPrototypeOf(st)); if (p && p !== Object.prototype) targets.push(p); }
-  let hooked = 0;
   for (const t of targets) for (const fn of ["getUserProfile", "getGuildMemberProfile"]) {
     if (typeof t[fn] !== "function") continue;
     safe(() => { un.push(hb.patcher.after(t, fn, (args, ret) => {
       if (args[0] !== BOT_ID) return;
       return Object.assign({}, ret || {}, { userId: BOT_ID, banner: "hb", accentColor: PROFILE_PRIMARY, themeColors: [PROFILE_PRIMARY, PROFILE_SECONDARY], bio: BOT_BIO });
-    })); hooked++; });
+    })); });
   }
   const names = { getUserBannerURL: "url", getBannerURL: "url", getUserBannerSource: "src", getBannerSource: "src" };
-  let banners = 0;
   for (const n of Object.keys(names)) {
     const m = findMod((x) => hasFn(x, n)); if (!m) continue;
     safe(() => { un.push(hb.patcher.after(m, n, (args, ret) => {
       const a = args[0];
       if (a && (a.id === BOT_ID || a.userId === BOT_ID)) return names[n] === "src" ? { uri: BOT_BANNER } : BOT_BANNER;
-    })); banners++; });
+    })); });
   }
-  let authorHooks = 0;
+
   for (const n of ["getMessageAuthor", "useMessageAuthor", "getAuthor"]) {
     const m = findMod((x) => hasFn(x, n)); if (!m) continue;
     safe(() => { un.push(hb.patcher.after(m, n, (args, ret) => {
       const a = ret && (ret.author || ret);
       if (a && (a.id === BOT_ID || (ret.author && ret.author.id === BOT_ID))) return Object.assign({}, ret, { colorString: GOLD, nickname: BOT_NAME });
-    })); authorHooks++; });
+    })); });
   }
-  const dateHooks = safe(() => patchBirthDate(un), 0);
-  const msg = "date hooks: " + dateHooks + ", profile store: " + (st ? "found" : "NOT found") + ", hooks: " + hooked + ", banner modules: " + banners + ", author hooks: " + authorHooks;
-  log(msg);
-  if (DEBUG) safe(() => setTimeout(() => say("HeartBlade debug", msg), 3000));
+  safe(() => patchBirthDate(un));
 }
 
 // ---------- client-side "Member Since" spoof ----------
@@ -277,7 +268,7 @@ const commands = [
 ];
 
 function registerCommands(un) {
-  const mod = commandsMod(); if (!mod) { log("commands module not found!"); return; }
+  const mod = commandsMod(); if (!mod) return;
   let next = -1000; commands.forEach((c, i) => { c.id = String(next - i); });
   un.push(hb.patcher.after(mod, "getBuiltInCommands", (args, res) => {
     if (!Array.isArray(res)) return;
@@ -285,7 +276,6 @@ function registerCommands(un) {
     const mine = commands.filter((c) => !res.includes(c) && (Array.isArray(t) ? t.includes(c.type) : t === undefined || t === null || c.type === t));
     return mine.length ? res.concat(mine) : undefined;
   }));
-  log("commands registered: " + commands.map((c) => "/" + c.name).join(", "));
 }
 
 // ---------- account list UI: the button on the profile page + the sheet ----------
@@ -308,14 +298,13 @@ const safeStringify = (obj) => {
 let pendingOld = null;      // the account we left; checked once the new login is saved, to prove its token survived
 async function waitLoggedOut(ms) {
   const end = Date.now() + ms;
-  while (Date.now() < end) { if (!safe(() => currentToken(), null)) return true; await sleep(250); }
+  while (Date.now() < end) { if (!safe(() => currentToken(), null)) return true; await sleep(40); }
   return !safe(() => currentToken(), null);
 }
 async function checkOldAccount() {
   const p = pendingOld; if (!p || currentId() === p.id) return;
   pendingOld = null;
   const v = await validateToken(p.token);
-  log("add account: the previous account's saved login is " + (v.ok ? "still valid" : "NOT valid (" + v.reason + ")"));
   if (!v.ok) say("Add account", "The previous account's saved login no longer works (Discord ended that session). Add it again with /login or its token.");
 }
 
@@ -351,35 +340,30 @@ function armLogoutHold(onHit) {
 
 async function startAddAccount() {
   const auth = findMod((m) => hasFn(m, "logout") && hasFn(m, "switchAccountToken"));
-  if (!auth) { log("add account: auth module missing"); return false; }
+  if (!auth) return false;
   if (!(await saveCurrent(true))) { say("Add account", "The current account could not be saved first, so nothing was changed."); return true; }
   if (store.get("native")) setNative(false);                 // the multi-account patch is not needed here
   const oldToken = track(currentToken()), oldId = currentId();
-  let hits = 0;
-  const release = armLogoutHold((where) => { hits++; log("add account: logout request held back (" + where + "), the saved token stays valid"); });
+  const release = armLogoutHold(() => {});
   const timer = setTimeout(() => safe(release), 30000);
-  const attempt = async (name, fn) => {
-    try { const r = fn(); if (r && typeof r.catch === "function") r.catch((e) => log("add account: " + name + " rejected: " + (e && e.message))); }
-    catch (e) { log("add account: " + name + " threw: " + (e && e.message)); return false; }
-    const ok = await waitLoggedOut(3500);
-    log("add account: " + name + (ok ? " logged this device out" : " did not log out"));
-    return ok;
+  const attempt = async (fn) => {
+    try { const r = fn(); if (r && typeof r.catch === "function") r.catch(() => {}); }
+    catch (e) { return false; }
+    return await waitLoggedOut(3500);
   };
   let done = false, local = false;
-  if (typeof auth.logoutInternal === "function") { done = await attempt("logoutInternal() (local only)", () => auth.logoutInternal()); local = done; }
-  if (!done) done = await attempt("logout()", () => auth.logout());
+  if (typeof auth.logoutInternal === "function") { done = await attempt(() => auth.logoutInternal()); local = done; }
+  if (!done) done = await attempt(() => auth.logout());
   if (done && local) {
     // logoutInternal() only clears the session; unlike logout() it does not leave the screen, which showed an empty card.
     // Discord's own navigation is used to land on the login screen.
-    await sleep(700);
+    await sleep(150);
     const nav = findMod((m) => hasFn(m, "resetToAuthRoute"));
-    if (nav) { try { nav.resetToAuthRoute(); log("add account: login screen opened via resetToAuthRoute"); } catch (e) { log("add account: resetToAuthRoute threw: " + (e && e.message)); } }
-    else log("add account: resetToAuthRoute module not found");
+    if (nav) safe(() => nav.resetToAuthRoute());
   }
-  setTimeout(() => { clearTimeout(timer); safe(release); log("add account: logout requests held back: " + hits); }, 6000);
-  if (!done) { log("add account: nothing logged out, login screen not opened"); return false; }
+  setTimeout(() => { clearTimeout(timer); safe(release); }, 6000);
+  if (!done) return false;
   if (oldToken && oldId) pendingOld = { id: oldId, token: oldToken };
-  log("add account: logged out locally, Discord's login screen should be open");
   return true;
 }
 
@@ -387,7 +371,7 @@ async function startAddAccount() {
 let autoTimer = null;
 function autoSave(why) {
   clearTimeout(autoTimer);
-  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) { log("current account saved (" + why + ")"); checkOldAccount().catch(() => {}); } }).catch(() => {}); }, 1500);
+  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) { checkOldAccount().catch(() => {}); } }).catch(() => {}); }, 1500);
 }
 function watchLogins(un) {
   // Works without Flux: when the logged-in account id changes (after any login), save it.
@@ -395,7 +379,7 @@ function watchLogins(un) {
   const timer = setInterval(() => { const id = safe(() => currentId(), null); if (!id) { lastId = null; return; } if (id !== lastId) { lastId = id; autoSave("account changed"); } }, 3000);
   un.push(() => clearInterval(timer));
   const f = safe(() => hb.flux);
-  if (!f || typeof f.subscribe !== "function") { log("flux not found: new logins are detected by polling instead"); return; }
+  if (!f || typeof f.subscribe !== "function") return;
   for (const ev of ["CONNECTION_OPEN", "LOGIN_SUCCESS"]) {
     const cb = () => autoSave(ev);
     safe(() => { f.subscribe(ev, cb); un.push(() => f.unsubscribe(ev, cb)); });
@@ -511,8 +495,6 @@ function ProfileEntry(props) {
 // We wrap that component: whatever it renders, our button is rendered right after it, so it sits directly under the Note card.
 // The button only shows on your own profile (props.userId is your id). The module may not be loaded yet when the plugin starts,
 // so we also listen for modules that initialise later.
-let ownSeenAt = 0;
-const stats = { leaf: 0, wraps: 0, edit: 0 };
 const NOTE_COMPONENT = "UserProfileNote";
 const patchedNote = new WeakSet();
 
@@ -526,14 +508,12 @@ function patchNoteModule(ex, un) {
   try {
     un.push(hb.patcher.after(ex, "default", (args, ret) => {
       try {
-        stats.wraps++;
         const uid = args && args[0] && args[0].userId;
         return R.createElement(R.Fragment, null, ret, R.createElement(ProfileEntry, { key: "hb-account-manager", userId: uid }));
       } catch (e) { return ret; }
     }));
-    log("profile: " + NOTE_COMPONENT + " patched, the button will sit under the Note card");
     return true;
-  } catch (e) { log("profile: could not patch " + NOTE_COMPONENT + ": " + scrub(e && e.message)); return false; }
+  } catch (e) { return false; }
 }
 
 function patchProfileEntry(un) {
@@ -542,19 +522,6 @@ function patchProfileEntry(un) {
   hits.forEach((m) => patchNoteModule(m, un));
   // not loaded yet: patch it the moment its module initialises (before the profile screen can render it)
   if (hb.metro.onModuleInit) un.push(hb.metro.onModuleInit((id, ex) => { safe(() => { if (isNoteModule(ex)) patchNoteModule(ex, un); }); }));
-  log("profile hook active (" + hits.length + " module(s) patched now)");
-  setTimeout(() => safe(() => log("profile hook after 30s: wrapped renders " + stats.wraps)), 30000);
-}
-
-// One-time dump of the multi-account functions Discord has (helps when a flow is not found).
-function diagnose() {
-  const names = [];
-  safe(() => hb.metro.findAll((m) => {
-    if (!m || isStub(m) || names.length > 14) return false;
-    safe(() => { const ks = Object.keys(m).filter((k) => /multi.?account|add.?account/i.test(k)); if (ks.length) names.push(ks.slice(0, 12).join(",")); });
-    return false;
-  }));
-  log("multi-account keys: " + (names.join(" | ") || "none"));
 }
 
 const undo = [];
@@ -569,11 +536,10 @@ return {
     safe(() => patchProfileEntry(undo));
     safe(() => watchLogins(undo));
     setTimeout(() => autoSave("load"), 4000);
-    setTimeout(() => safe(diagnose), 6000);
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    clearTimeout(autoTimer); ownSeenAt = 0; stats.leaf = 0; stats.wraps = 0; stats.edit = 0; copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
+    clearTimeout(autoTimer); copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
     hbOpenAccounts = () => {};
     secrets.clear();
   },
