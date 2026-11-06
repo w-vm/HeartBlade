@@ -357,17 +357,35 @@ function dumpAddFlow() {
   }));
 }
 
-// Discord's navigation module (pushModal / getOpenModalKey / resetToAuthRoute) and the key of its login modal, found with the log dump.
+// ---------- learn how Discord opens its own login window ----------
+// pushModal is never called with guessed arguments (a wrong shape crashes the app). Instead every pushModal call Discord makes is
+// described in the log, and the exact argument Discord used for the login modal is kept so "+" can replay it.
+const LOGIN_KEY = "multiaccount-login-modal";
+let learned = null;          // the argument Discord passed to pushModal for the login modal (this session)
+const describe = (v, d) => {
+  d = d || 0;
+  if (typeof v === "function") return "fn:" + (v.name || "anon") + "/" + v.length;
+  if (v === null || typeof v !== "object") return typeof v === "string" ? JSON.stringify(v.slice(0, 70)) : String(v);
+  if (Array.isArray(v)) return d >= 3 ? "[…]" : "[" + v.slice(0, 4).map((x) => describe(x, d + 1)).join(", ") + (v.length > 4 ? ", …" : "") + "]";
+  if (d >= 3) return "{…}";
+  const ks = safe(() => Object.keys(v), []);
+  return "{" + ks.slice(0, 14).map((k) => { const dsc = safe(() => Object.getOwnPropertyDescriptor(v, k), null); return k + ":" + (dsc && "value" in dsc ? describe(dsc.value, d + 1) : "accessor"); }).join(", ") + (ks.length > 14 ? ", …" : "") + "}";
+};
+function watchNavigation(un) {
+  const nav = findMod((m) => hasFn(m, "pushModal") && hasFn(m, "getOpenModalKey"));
+  if (!nav) { log("navigation module not found"); return; }
+  un.push(hb.patcher.before(nav, "pushModal", (args) => {
+    const text = describe(args[0]);
+    if (text.indexOf("multiaccount") !== -1 || text.indexOf("account") !== -1 || text.indexOf("login") !== -1) log("pushModal " + text);
+    if (text.indexOf(LOGIN_KEY) !== -1) { learned = args[0]; log("login modal argument learned"); }
+  }));
+  log("navigation watcher on (open Discord's own Add account once to teach the + button)");
+}
+
 async function openLoginViaNav() {
-  const nav = findMod((m) => hasFn(m, "resetToAuthRoute") && hasFn(m, "getOpenModalKey"));
-  if (!nav) { log("login: navigation module missing"); return false; }
-  // pushModal is NOT called with guessed arguments: a wrong shape registers a screen without a component and crashes the app.
-  // Last resort: Discord's own login screen (your current account is saved first and stays logged in).
-  if (hasFn(nav, "resetToAuthRoute")) {
-    const yes = await confirmAsk("Add account", "Open Discord's login screen? Your current account stays saved here. Log in with the new account, then switch back from Account Manager any time.", "Open login");
-    if (!yes) return true;
-    try { nav.resetToAuthRoute(); log("login opened via resetToAuthRoute"); return true; } catch (e) { log("resetToAuthRoute failed: " + (e && e.message)); }
-  }
+  const nav = findMod((m) => hasFn(m, "pushModal") && hasFn(m, "getOpenModalKey"));
+  if (!nav) return false;
+  if (learned) { try { nav.pushModal(learned); log("login modal replayed"); return true; } catch (e) { log("replay failed: " + (e && e.message)); } }
   return false;
 }
 
@@ -392,8 +410,12 @@ function autoSave(why) {
   autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) log("current account saved (" + why + ")"); }).catch(() => {}); }, 1500);
 }
 function watchLogins(un) {
+  // Works without Flux: when the logged-in account id changes (after any login), save it.
+  let lastId = currentId();
+  const timer = setInterval(() => { const id = safe(() => currentId(), null); if (id && id !== lastId) { lastId = id; autoSave("account changed"); } }, 3000);
+  un.push(() => clearInterval(timer));
   const f = safe(() => hb.flux);
-  if (!f || typeof f.subscribe !== "function") { log("flux not found: accounts are only saved by /login, + and Save current"); return; }
+  if (!f || typeof f.subscribe !== "function") { log("flux not found: new logins are detected by polling instead"); return; }
   for (const ev of ["CONNECTION_OPEN", "LOGIN_SUCCESS"]) {
     const cb = () => autoSave(ev);
     safe(() => { f.subscribe(ev, cb); un.push(() => f.unsubscribe(ev, cb)); });
@@ -440,7 +462,7 @@ function AccountSheet(props) {
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
   const add = async () => {
     props.onClose(); await sleep(350);
-    if (!(await startAddAccount())) say("Add account", "Could not open Discord's login window yet. Use “Add with token” for now. Details were written to the log.");
+    if (!(await startAddAccount())) say("Add account", "Discord's login window is not learned yet. Open Discord's own Add account once (see Settings), then press + again. Add with token works meanwhile.");
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
@@ -563,6 +585,7 @@ return {
     safe(() => patchAvatar(undo));
     safe(() => patchProfile(undo));
     safe(() => patchProfileEntry(undo));
+    safe(() => watchNavigation(undo));
     safe(() => watchLogins(undo));
     setTimeout(() => autoSave("load"), 4000);
     setTimeout(() => safe(diagnose), 6000);
