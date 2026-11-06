@@ -40,7 +40,24 @@ export async function loadUser(id: string): Promise<DUser | null> {
   return null;
 }
 
-const OPENERS = ["showUserProfile", "openUserProfile", "openUserProfileSheet", "showUserProfileSheet", "openUserProfileModal"];
+const OPENERS = ["showUserProfileActionSheet", "showUserProfile", "openUserProfile", "openUserProfileSheet", "showUserProfileSheet", "openUserProfileModal"];
+
+/** The function that opens a profile: an export with that name, or a module whose (default) function is named like it. */
+function findOpener(name: string): ((a: any) => any) | null {
+  try {
+    const m = metro.findByProps(name);
+    if (typeof m?.[name] === "function") return (a) => m[name](a);
+  } catch { /* next lookup */ }
+  try {
+    const m = metro.find((x: any) => { try { return typeof x?.default === "function" && (x.default.name === name || x.default.displayName === name); } catch { return false; } });
+    if (m) return (a) => m.default(a);
+  } catch { /* none */ }
+  try {
+    const f = metro.find((x: any) => { try { return typeof x === "function" && (x.name === name || x.displayName === name); } catch { return false; } });
+    if (typeof f === "function") return (a) => f(a);
+  } catch { /* none */ }
+  return null;
+}
 
 /**
  * Opens the profile inside Discord, never in the browser. Order: Discord's own profile opener (several known names,
@@ -49,11 +66,11 @@ const OPENERS = ["showUserProfile", "openUserProfile", "openUserProfileSheet", "
  */
 export function openProfile(id: string = BRAND.discordId) {
   for (const name of OPENERS) {
-    try {
-      const m = metro.findByProps(name);
-      if (typeof m?.[name] !== "function") continue;
-      try { m[name]({ userId: id }); log(`profile opened in-app via ${name}`); return; } catch (e) { log(`profile opener ${name} failed: ${(e as any)?.message ?? e}`); }
-    } catch { /* next name */ }
+    const fn = findOpener(name);
+    if (!fn) continue;
+    for (const args of [{ userId: id }, { userId: id, analyticsLocation: { page: "HeartBlade" } }]) {
+      try { fn(args); log(`profile opened in-app via ${name}`); return; } catch (e) { log(`profile opener ${name} failed: ${(e as any)?.message ?? e}`); }
+    }
   }
   openUrl(`discord://-/users/${id}`, () => openUrl(BRAND.discordUrl));
   log("profile opened via discord:// link");

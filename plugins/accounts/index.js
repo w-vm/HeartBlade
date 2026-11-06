@@ -1,4 +1,4 @@
-// Account Manager v0.3.10 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.11 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -267,7 +267,7 @@ function patchBirthDate(un) {
 
 let hbOpenAccounts = () => {};
 
-const mkCmd = (name, description, options, execute) => ({ name, untranslatedName: name, displayName: name, description, untranslatedDescription: description, displayDescription: description, applicationId: "-1", inputType: 1, type: 1, options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: o.type || 3, choices: [], autocomplete: false })), execute });
+const mkCmd = (name, description, options, execute) => ({ name, untranslatedName: name, displayName: name, description, untranslatedDescription: description, displayDescription: description, applicationId: "-1", inputType: 1, type: 1, options: options.map((o) => ({ name: o.name, untranslatedName: o.name, displayName: o.name, description: o.description, untranslatedDescription: o.description, displayDescription: o.description, required: !!o.required, type: o.type || 3, autocomplete: false })), execute });
 const argOf = (args, name) => safe(() => Array.isArray(args) ? (args.find((x) => x.name === name) || {}).value : args && args[name]);
 
 const commands = [
