@@ -1,4 +1,4 @@
-// Account Manager v0.5.8 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.5.9 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -301,48 +301,62 @@ const safeStringify = (obj) => {
   } catch (e) { return ""; }
 };
 
-// ---------- "+" : log in with email + password (Discord's own login request); nothing is logged out ----------
-// Discord's own REST layer sends the request (same headers / captcha handling as its login screen). The account that
-// answers is saved next to the current one, so the old account stays valid: no logout ever happens.
-async function loginWithPassword() {
-  const login = await ask("Add account", "Email or phone number"); if (!login) return null;
-  const password = await ask("Add account", "Password", true); if (!password) return null;
+// ---------- "+" : Discord's own login screen ----------
+// "+" does what you would do by hand, safely: 1) the current account's token is saved (encrypted), 2) Discord logs out
+// locally, but the logout request to the server is held back, so the saved token stays valid, 3) Discord's own official login
+// screen opens, 4) the account you log into is saved automatically (watchLogins) and you are already on it.
+let pendingOld = null;      // the account we left; checked once the new login is saved, to prove its token survived
+async function waitLoggedOut(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (!safe(() => currentToken(), null)) return true; await sleep(250); }
+  return !safe(() => currentToken(), null);
+}
+async function checkOldAccount() {
+  const p = pendingOld; if (!p || currentId() === p.id) return;
+  pendingOld = null;
+  const v = await validateToken(p.token);
+  log("add account: the previous account's saved login is " + (v.ok ? "still valid" : "NOT valid (" + v.reason + ")"));
+  if (!v.ok) say("Add account", "The previous account's saved login no longer works (Discord ended that session). Add it again with /login or its token.");
+}
+
+async function startAddAccount() {
+  const auth = findMod((m) => hasFn(m, "logout") && hasFn(m, "switchAccountToken"));
   const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
-  const parse = (b) => { if (typeof b === "string") { try { return JSON.parse(b); } catch (e) { return null; } } return b && typeof b === "object" ? b : null; };
-  const call = async (url, body) => {
-    if (http) {
-      try { const r = await http.post({ url, body }); return { status: r.status, body: parse(r.body) }; }
-      catch (e) { if (e && e.status) return { status: e.status, body: parse(e.body) }; log("add account: http.post failed: " + (e && e.message)); }
+  if (!auth || !http) { log("add account: auth or REST module missing"); return false; }
+  if (!(await saveCurrent(true))) { say("Add account", "The current account could not be saved first, so nothing was changed."); return true; }
+  if (store.get("native")) setNative(false);                 // the multi-account patch is not needed here
+  const oldToken = track(currentToken()), oldId = currentId();
+  let hold = true;
+  const release = hb.patcher.instead(http, "post", (args, orig) => {
+    if (hold && safe(() => safeStringify(args[0]).indexOf("/auth/logout") !== -1, false)) {
+      hold = false; log("add account: logout request held back, the saved token stays valid");
+      return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
     }
-    try { const r = await fetch(API + url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); let b = null; try { b = await r.json(); } catch (e) {} return { status: r.status, body: b }; }
-    catch (e) { return { status: 0, body: null }; }
+    return orig(...args);
+  });
+  const timer = setTimeout(() => safe(release), 30000);
+  // Logging out must really happen, so each step is checked (the token has to disappear), and the next one is tried if it did not.
+  const attempt = async (name, fn) => {
+    try { const r = fn(); if (r && typeof r.catch === "function") r.catch((e) => log("add account: " + name + " rejected: " + (e && e.message))); }
+    catch (e) { log("add account: " + name + " threw: " + (e && e.message)); return false; }
+    const ok = await waitLoggedOut(3500);
+    log("add account: " + name + (ok ? " logged this device out" : " did not log out"));
+    return ok;
   };
-  const fail = (r) => {
-    const b = r.body || {};
-    log("add account: login answered " + r.status + " keys=" + Object.keys(b).join(","));
-    if (b.captcha_key || b.captcha_sitekey) return "Discord asked for a captcha. Use “Add with token” this time.";
-    if (r.status === 429) return "Rate limited, try again in a minute.";
-    if (b.errors && (b.errors.login || b.errors.password)) return "Wrong email or password.";
-    if (b.message) return String(b.message);
-    return "Login failed (HTTP " + r.status + ").";
-  };
-  let r = await call("/auth/login", { login: String(login).trim(), password, undelete: false, login_source: null, gift_code_sku_id: null });
-  let b = r.body || {};
-  if (b.mfa && b.ticket) {
-    const code = await ask("Two-factor code", "Enter the code from your authenticator app (or a backup code).");
-    if (!code) return null;
-    r = await call("/auth/mfa/totp", { code: String(code).replace(/\s/g, ""), ticket: b.ticket, login_source: null, gift_code_sku_id: null });
-    b = r.body || {};
-  }
-  if (b.token && typeof b.token === "string") return { token: b.token };
-  return { error: fail(r) };
+  let done = await attempt("logout()", () => auth.logout());
+  if (!done && typeof auth.logoutInternal === "function") done = await attempt("logoutInternal()", () => auth.logoutInternal());
+  clearTimeout(timer); safe(release);
+  if (!done) { log("add account: nothing logged out, login screen not opened"); return false; }
+  if (oldToken && oldId) pendingOld = { id: oldId, token: oldToken };
+  log("add account: logged out locally, Discord's login screen should be open");
+  return true;
 }
 
 // ---------- save every account that logs in (via /login, via +, or any other way) ----------
 let autoTimer = null;
 function autoSave(why) {
   clearTimeout(autoTimer);
-  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) { log("current account saved (" + why + ")"); } }).catch(() => {}); }, 1500);
+  autoTimer = setTimeout(() => { saveCurrent(true).then((ok) => { if (ok) { log("current account saved (" + why + ")"); checkOldAccount().catch(() => {}); } }).catch(() => {}); }, 1500);
 }
 function watchLogins(un) {
   // Works without Flux: when the logged-in account id changes (after any login), save it.
@@ -397,23 +411,9 @@ function AccountSheet(props) {
   const remove = (a) => confirmAsk("Remove " + a.name + "?", "It is removed from this list only.", "Remove", true).then((yes) => { if (yes) { removeAccount(a.id); bump(); } });
   const add = async () => {
     if (busy) return;
-    const r = await loginWithPassword();
-    if (!r) return;
-    if (r.error) return say("Add account", r.error);
-    handleToken(r.token);
-  };
-  const handleToken = async (raw) => {
-    setBusy("Signing in…");
-    try {
-      const v = await validateToken(raw);
-      if (!v.ok) { setBusy(""); return say("Add account", v.reason); }
-      await saveCurrent(true);
-      saveAccount(v.token, v.user);
-      if (v.user.id === currentId()) { setBusy(""); bump(); return; }
-      setBusy("Switching to " + v.user.name + "…");
-      const r = await switchTo(v.token);
-      setBusy(""); if (r) props.onClose(); else bump();
-    } catch (e) { setBusy(""); log("add account failed: " + (e && e.message)); }
+    props.onClose();                                          // the screen changes under the sheet, so close it first
+    const ok = await startAddAccount();
+    if (!ok) say("Add account", "Discord did not log out, so its login screen could not open. Use \u201cAdd with token\u201d for now.");
   };
   const addToken = () => addByToken().then((ok) => { if (ok) bump(); });
 
