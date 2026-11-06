@@ -1,4 +1,4 @@
-// Account Manager v0.5.6 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.5.7 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -315,15 +315,20 @@ function findWebView() {
   if (webViewComp !== undefined) return webViewComp;
   const isComp = (x) => !!x && (typeof x === "function" || (typeof x === "object" && !!x.$$typeof));
   const nameOk = (x) => /webview/i.test(safe(() => String(x.displayName || x.name || ""), ""));
-  let comp = safe(() => RN.WebView, null);
-  if (!isComp(comp)) {
-    const m = findMod((m) => isComp(m.WebView) || (isComp(m.default) && nameOk(m.default)));
-    comp = m ? (isComp(m.WebView) ? m.WebView : m.default) : null;
-  }
-  if (!isComp(comp)) comp = safe(() => RN.requireNativeComponent("RNCWebView"), null);
-  if (!isComp(comp)) { log("add account: no WebView component found"); comp = null; }
-  else log("add account: WebView component found");
+  // Only the real native web view is used: Discord's own wrappers take other props and crash ("Invalid URL: undefined").
+  let comp = safe(() => RN.requireNativeComponent("RNCWebView"), null);
+  let via = "native RNCWebView";
+  if (!isComp(comp)) { comp = safe(() => RN.UIManager && RN.UIManager.getViewManagerConfig && RN.UIManager.getViewManagerConfig("RNCWebView") ? RN.requireNativeComponent("RNCWebViewManager") : null, null); via = "RNCWebViewManager"; }
+  if (!isComp(comp)) { log("add account: no native web view (RNCWebView) in this Discord build"); comp = null; }
+  else log("add account: web view via " + via);
   return (webViewComp = comp);
+}
+
+class LoginBoundary extends R.Component {
+  constructor(p) { super(p); this.state = { bad: false }; }
+  static getDerivedStateFromError() { return { bad: true }; }
+  componentDidCatch(e) { log("add account: login view error: " + (e && e.message)); safe(() => this.props.onFail(e)); }
+  render() { return this.state.bad ? null : this.props.children; }
 }
 
 function AddLogin(props) {
@@ -342,12 +347,12 @@ function AddLogin(props) {
         R.createElement(Text, { style: { color: C.text, fontSize: 17, fontWeight: "700" } }, "Add account"),
         R.createElement(Pressable, { onPress: props.onClose, hitSlop: 12 }, R.createElement(Text, { style: { color: C.blue, fontSize: 16, fontWeight: "600" } }, "Cancel"))),
       R.createElement(View, { style: { flex: 1 } },
-        WV ? R.createElement(WV, {
+        WV ? R.createElement(LoginBoundary, { onFail: () => { props.onClose(); say("Add account", "The login window failed to open. Use “Add with token”."); } }, R.createElement(WV, {
           source: { uri: "https://discord.com/login" }, style: { flex: 1 },
           incognito: true, javaScriptEnabled: true, domStorageEnabled: true, originWhitelist: ["*"], userAgent: LOGIN_UA,
           injectedJavaScript: LOGIN_JS, injectedJavaScriptForMainFrameOnly: false, messagingEnabled: true,
           onMessage, onLoadEnd: () => setLoading(false),
-        }) : null,
+        })) : null,
         loading ? R.createElement(View, { pointerEvents: "none", style: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" } }, R.createElement(ActivityIndicator, { color: C.muted })) : null)));
 }
 
