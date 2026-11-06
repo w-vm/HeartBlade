@@ -203,7 +203,7 @@ function ManagerPage(props: any) {
     const sub = m.version ? `v${m.version}` : author ? undefined : e.url;
     // Tap: info page (details, settings when the plugin has them, author). Swipe left: delete.
     const open = () => go(props, "info", m.name, { kind, id: e.id });
-    return h(SwipeRow, { key: e.id, label: "Delete", onDelete: () => confirm(`Delete ${m.name}?`, `${isPlugin ? "The plugin" : "The theme"} and its saved data will be removed from this device.`, "Delete", () => { remove(kind, e.id); bump(); }, true) },
+    return h(SwipeRow, { key: e.id, label: "Delete", onDelete: (close: () => void) => confirm(`Delete ${m.name}?`, `${isPlugin ? "The plugin" : "The theme"} and its saved data will be removed from this device.`, "Delete", () => { remove(kind, e.id); bump(); }, true, close) },
       SwitchRow({ title: m.name, subtitle: sub, extra: author ? h(AuthorChip, { name: author }) : undefined, lines: 1, on: !!e.enabled, onChange: (v: boolean) => { setEnabled(kind, e.id, v); bump(); }, onPress: open }));
   });
 

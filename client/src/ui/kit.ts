@@ -262,7 +262,7 @@ let closeOpenRow: (() => void) | null = null;
  *  - only one row stays open at a time.
  * Use it as a component: h(SwipeRow, {...}, row).
  */
-export function SwipeRow(p: { onDelete: () => void; label?: string; children?: any }) {
+export function SwipeRow(p: { onDelete: (close: () => void) => void; label?: string; children?: any }) {
   const { useRef, useEffect } = RX();
   const { View, Text, Pressable, Animated, PanResponder } = RN(); const P = palette();
   const W = 92;
@@ -319,7 +319,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
         lockScroll(false);
         if (!moved.current) { settle(0); return; }                          // a plain tap on an open row only closes it
         const at = start.current + g.dx;
-        if (at <= -full()) { settle(-W, g.vx); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
+        if (at <= -full()) { settle(-W, g.vx); p.onDelete(() => settle(0)); return; }      // dragged all the way: ask to delete, row stays open if cancelled
         // Any small drag decides by its direction: left opens the Delete button, right closes it.
         if (g.dx < -6) settle(-W, g.vx);
         else if (g.dx > 6) settle(0, g.vx);
@@ -334,7 +334,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   const LabelBox = typeof x.current.interpolate === "function" ? Animated.View : View;
   return h(View, { style: { overflow: "hidden", backgroundColor: P.danger }, onLayout: (e: any) => { width.current = e?.nativeEvent?.layout?.width ?? width.current; } },
     h(LabelBox, { style: labelStyle },
-      h(Pressable, { onPress: () => { settle(0); p.onDelete(); }, accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
+      h(Pressable, { onPress: () => p.onDelete(() => settle(0)), accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
         h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, label))),
     h(Animated.View, {
       ...responder.current.panHandlers,
@@ -427,8 +427,8 @@ export function Note(text: string, center = true) {
 
 export const alert = (title: string, message?: string, buttons?: any[]) => { try { RN()?.Alert?.alert(title, message, buttons); } catch { /* ignore */ } };
 
-export function confirm(title: string, message: string, action: string, onConfirm: () => void, destructive = false) {
-  alert(title, message, [{ text: "Cancel", style: "cancel" }, { text: action, style: destructive ? "destructive" : "default", onPress: onConfirm }]);
+export function confirm(title: string, message: string, action: string, onConfirm: () => void, destructive = false, onCancel?: () => void) {
+  alert(title, message, [{ text: "Cancel", style: "cancel", onPress: onCancel }, { text: action, style: destructive ? "destructive" : "default", onPress: onConfirm }]);
 }
 
 /** iOS text prompt (Alert.prompt); falls back to a plain alert if it is missing. */
