@@ -231,8 +231,71 @@ export function spyTexts(query = "", max = 80) {
 export const spyMute = (on: boolean) => { muted = on; };
 export const spyClear = () => { hits.length = 0; return new Out("cleared"); };
 
+// ---- React fiber tree ------------------------------------------------------------------------------------------
+// The element-creation spy only sees code that calls the React functions we patch. Discord's own screens may not, so we
+// also keep a minimal React DevTools hook: React hands it every committed root, and from a root we can read the whole
+// rendered tree (components, props, parents) no matter how the elements were created. It must be installed before React
+// starts, i.e. from the first lines of index.ts. It only stores the roots; it never changes what React does.
+const roots = new Map<number, any>();
+export function installFiberHook() {
+  const g: any = globalThis;
+  if (g.__REACT_DEVTOOLS_GLOBAL_HOOK__) return false;
+  let n = 0;
+  const hook = {
+    supportsFiber: true, isDisabled: false, renderers: new Map<number, any>(),
+    inject(r: any) { const id = ++n; hook.renderers.set(id, r); return id; },
+    onCommitFiberRoot(id: number, root: any) { roots.set(id, root); },
+    onPostCommitFiberRoot() {}, onCommitFiberUnmount() {}, setStrictMode() {}, checkDCE() {},
+    sub() { return () => {}; }, on() {}, off() {}, emit() {},
+  };
+  try { Object.defineProperty(g, "__REACT_DEVTOOLS_GLOBAL_HOOK__", { value: hook, configurable: true, writable: true }); return true; } catch { return false; }
+}
+
+const COMPOSITE = new Set([0, 1, 11, 14, 15]);
+function eachFiber(fn: (f: any) => void, cap = 300000) {
+  let seen = 0;
+  for (const root of roots.values()) {
+    const stack: any[] = [root.current];
+    while (stack.length && seen < cap) {
+      const f = stack.pop(); if (!f) continue; seen++;
+      try { fn(f); } catch { /* ignore */ }
+      if (f.sibling) stack.push(f.sibling);
+      if (f.child) stack.push(f.child);
+    }
+  }
+  return seen;
+}
+const countKids = (f: any) => { let n = 0; for (let c = f?.child; c; c = c.sibling) n++; return n; };
+const indexIn = (f: any) => { let i = 0; for (let c = f?.return?.child; c; c = c.sibling, i++) if (c === f) return i; return -1; };
+
+/** Find rendered text anywhere in the app: which components draw it, where they live and where it sits among siblings. */
+export function treeFind(query: string, max = 12) {
+  if (!roots.size) return new Out("No React root captured yet. Interact with the app once (open a screen), then try again. If it stays empty, the hook was installed too late: restart Discord.");
+  const q = low(query); const lines: string[] = []; const seen = new Set<string>(); let hitsN = 0;
+  const total = eachFiber((f) => {
+    let text: string | undefined;
+    if (f.tag === 6 && typeof f.memoizedProps === "string" && low(f.memoizedProps).includes(q)) text = f.memoizedProps;
+    else if (COMPOSITE.has(f.tag)) text = textsOf(f.memoizedProps).find((t) => low(t).includes(q));
+    if (text === undefined || hitsN >= max) return;
+    const chain: string[] = [];
+    let cur = f.return; let hops = 0;
+    for (; cur && chain.length < 9 && hops < 60; cur = cur.return, hops++) {
+      if (!COMPOSITE.has(cur.tag)) continue;
+      const loc = moduleOf(cur.type)[0] ?? "(module unknown)";
+      chain.push(`<${nameOf(cur.type)}> ${loc}  props: ${keysOf(cur.memoizedProps).filter((k) => k !== "children").slice(0, 8).join(", ")}  [child ${indexIn(cur)} of ${countKids(cur.return)}]`);
+    }
+    const self = COMPOSITE.has(f.tag) ? `<${nameOf(f.type)}> ${moduleOf(f.type)[0] ?? "(module unknown)"}  [child ${indexIn(f)} of ${countKids(f.return)}]` : "(text node)";
+    const key = text + "|" + self + "|" + chain.join(">");
+    if (seen.has(key)) return; seen.add(key); hitsN++;
+    lines.push("", `"${text.slice(0, 70)}"`, `  drawn by: ${self}`, ...chain.map((c, i) => `  ${i === 0 ? "inside:  " : "  <      "}${c}`));
+  });
+  return new Out([`${roots.size} root(s), ${total} fibers scanned, ${hitsN} match(es) for "${query}"`, ...lines].join("\n"));
+}
+export const tree = { find: treeFind, roots: () => roots.size };
+
 export const dev = {
   modules, props, names, moduleOf, where, get, fns, inspect, store, trace, traces, untrace,
+  tree,
   spy: { start: spyStart, stop: spyStop, results: spyResults, clear: spyClear, mute: spyMute, texts: spyTexts },
   help: () => new Out([
     "dev.names('Profile')        components/functions by name + their module",
@@ -243,6 +306,7 @@ export const dev = {
     "dev.store('UserStore')      store methods and fields",
     "dev.where(fn)               module + export of this exact function",
     "dev.trace(obj,'key')        log calls of a method; traces() / untrace()",
+    "dev.tree.find('Note')       find rendered text anywhere on screen + its components (best tool)",
     "dev.spy.start('Note')       record rendered UI containing that text",
     "dev.spy.results()           matches, parent chain, module of each",
     "dev.spy.texts('edit')        every text the spy saw (learn what the screen contains)",

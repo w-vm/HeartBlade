@@ -75,6 +75,7 @@ const SNIPPETS: Array<[string, string, string]> = [
   ["Help", "All developer tools", "dev.help()"],
   ["Find a component by name", "e.g. Profile, Note, Banner", "dev.names('Profile')"],
   ["Find modules by export key", "e.g. getToken, openProfile", "dev.modules('profile')"],
+  ["Find text on screen (best)", "Which component draws it, and its module", "dev.tree.find('Note')"],
   ["Start UI spy for a text", "Then open the screen, then Spy results", "dev.spy.start('Note')"],
   ["Spy results", "Matches, parent chain and module of each", "dev.spy.results()"],
   ["Inspect a store", "Methods and fields", "dev.store('UserStore')"],
@@ -119,6 +120,7 @@ export function ConsolePage(_props: any) {
         title: "Find things in Discord",
         footer: "Use these to locate the component or function to patch. Spy: start it, open the screen you care about, then show the results.",
         children: [
+          Row({ title: "Find text on screen…", subtitle: "Works for any screen, nothing to start first", chevron: true, onPress: () => askAndRun("Find text", "Text visible anywhere in the app, e.g. only visible to you.", (t) => `dev.tree.find('${t}')`) }),
           Row({ title: "Find component by name…", subtitle: "Which function renders it, and in which module", chevron: true, onPress: () => askAndRun("Find component", "Part of its name (names are minified, try several).", (t) => `dev.names('${t}')`) }),
           Row({ title: "Find module by export key…", subtitle: "e.g. getToken, openProfile, createList", chevron: true, onPress: () => askAndRun("Find module", "Part of an export name.", (t) => `dev.modules('${t}')`) }),
           Row({ title: "UI spy: start…", subtitle: "Records rendered text and the components around it", chevron: true, onPress: () => askAndRun("UI spy", "Text visible on the screen, e.g. Note or Edit Profile.", (t) => `dev.spy.start('${t}')`) }),

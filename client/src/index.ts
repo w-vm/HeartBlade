@@ -1,4 +1,4 @@
-import { dev } from "./dev";
+import { dev, installFiberHook } from "./dev";
 import { installMetroHook, findLoaded, byProps, onModuleInit, findByProps, findByName, findByStoreName, find, findAll } from "./metro";
 import { readPrefs } from "./prefs";
 import { startEnabledPlugins } from "./plugins";
@@ -12,6 +12,7 @@ import { startUpdateCheck } from "./updates";
 
 // Must happen synchronously, before Discord's own bundle registers its modules.
 installMetroHook();
+installFiberHook(); // lets the console read the rendered React tree (dev.tree.find)
 
 (globalThis as any).__hb = { version: __HB_VERSION__, native: native.hasNative(), metro: { find, findAll, findByProps, findByName, findByStoreName }, theme: { apply: applyTheme, remove: removeTheme }, dev }; // handy in Developer > JS console
 log(`runtime ${__HB_VERSION__} (native ${native.version()})`);
