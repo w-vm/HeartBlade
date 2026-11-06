@@ -297,7 +297,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
 
   if (!responder.current) {
     // Clearly horizontal (the finger may drift a little vertically): the row takes the drag before the page scroll does.
-    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy);
+    const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 4 && Math.abs(g.dx) > Math.abs(g.dy);
     // The row can follow the finger all the way to the left, but never goes right of its resting place.
     const band = (v: number) => Math.max(-(width.current || 4000), Math.min(0, v));
     const full = () => Math.max(W * 2, width.current * 0.5);
@@ -319,9 +319,11 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
         lockScroll(false);
         if (!moved.current) { settle(0); return; }                          // a plain tap on an open row only closes it
         const at = start.current + g.dx;
-        if (at < -full()) { settle(-W, g.vx); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
-        const open = g.vx < -0.35 ? true : g.vx > 0.35 ? false : at < -W / 2;
-        settle(open ? -W : 0, g.vx);
+        if (at < -Math.max(full(), width.current * 0.7)) { settle(-W, g.vx); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
+        // Any small drag decides by its direction: left opens the Delete button, right closes it.
+        if (g.dx < -6) settle(-W, g.vx);
+        else if (g.dx > 6) settle(0, g.vx);
+        else settle(opened.current ? -W : 0, g.vx);
       },
       onPanResponderTerminate: () => { lockScroll(false); settle(opened.current ? -W : 0); },
     });
