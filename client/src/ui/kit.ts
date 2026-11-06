@@ -241,10 +241,11 @@ export function SwitchRow(p: RowProps & { on: boolean; onChange: (v: boolean) =>
 let closeOpenRow: (() => void) | null = null;
 
 /**
- * iOS style swipe to delete: drag the row to the left to reveal a red button, tap it to delete; drag it back to the right
- * (or tap the row) to close it. Built on PanResponder + Animated only (no gesture-handler), so it behaves the same everywhere:
+ * iOS style swipe to delete: drag the row to the left to reveal a red button and tap it to delete. Keep dragging past
+ * half the row and let go to delete straight away (the confirmation still appears; if you cancel, the row stays open and
+ * you can drag it back to the right, or tap it, to close it). Built on PanResponder + Animated only (no gesture-handler):
  *  - a drag only counts as a swipe when it is clearly horizontal, and then the page scroll is locked until the finger lifts;
- *  - the row follows the finger in both directions with a soft resistance past the ends, and settles by position or flick speed;
+ *  - the row never moves to the right of its resting place, and settles open or closed by position or flick speed;
  *  - only one row stays open at a time.
  * Use it as a component: h(SwipeRow, {...}, row).
  */
@@ -256,6 +257,7 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
   const x = useRef(null as any);
   const pos = useRef(0);
   const start = useRef(0);
+  const width = useRef(0);
   const opened = useRef(false);
   const responder = useRef(null as any);
   const [isOpen, setOpen] = useState(false);
@@ -275,8 +277,9 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
 
   if (!responder.current) {
     const horizontal = (_e: any, g: any) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
-    // Past either end the row still moves, but only a third as far, like an iOS rubber band.
-    const band = (v: number) => (v > 0 ? v / 3 : v < -W ? -W + (v + W) / 3 : v);
+    // The row can follow the finger all the way to the left, but never goes right of its resting place.
+    const band = (v: number) => (v > 0 ? 0 : v);
+    const full = () => Math.max(W * 2, width.current * 0.5);
     responder.current = PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       // Capture phase: a clearly horizontal drag is ours before the switch, the row's button or the scroll view can claim it.
@@ -292,14 +295,19 @@ export function SwipeRow(p: { onDelete: () => void; label?: string; children?: a
       onPanResponderRelease: (_e: any, g: any) => {
         lockScroll(false);
         const at = start.current + g.dx;
+        if (at < -full()) { settle(-W); p.onDelete(); return; }      // dragged all the way: ask to delete, row stays open if cancelled
         const open = g.vx < -0.35 ? true : g.vx > 0.35 ? false : at < -W / 2;
         settle(open ? -W : 0);
       },
       onPanResponderTerminate: () => { lockScroll(false); settle(opened.current ? -W : 0); },
     });
   }
-  return h(View, { style: { overflow: "hidden", backgroundColor: P.danger } },
-    h(View, { style: { position: "absolute", top: 0, bottom: 0, right: 0, width: W } },
+  // The label stays next to the row's edge while the row is dragged past the button.
+  let labelStyle: any = { position: "absolute", top: 0, bottom: 0, right: 0, width: W };
+  try { if (typeof x.current.interpolate === "function") labelStyle = { ...labelStyle, transform: [{ translateX: x.current.interpolate({ inputRange: [-1200, -W, 0], outputRange: [-1200 + W, 0, 0], extrapolateRight: "clamp" }) }] }; } catch { /* plain label */ }
+  const LabelBox = typeof x.current.interpolate === "function" ? Animated.View : View;
+  return h(View, { style: { overflow: "hidden", backgroundColor: P.danger }, onLayout: (e: any) => { width.current = e?.nativeEvent?.layout?.width ?? width.current; } },
+    h(LabelBox, { style: labelStyle },
       h(Pressable, { onPress: () => { settle(0); p.onDelete(); }, accessibilityLabel: label, style: { flex: 1, alignItems: "center", justifyContent: "center" } },
         h(Text, { style: { color: "#ffffff", fontSize: 15, fontWeight: "700" } }, label))),
     h(Animated.View, { ...responder.current.panHandlers, style: { backgroundColor: P.card, transform: [{ translateX: x.current }] } },

@@ -1,4 +1,4 @@
-// Account Manager v0.3.7 (HeartBlade plugin): /token, /login, encrypted account switcher.
+// Account Manager v0.3.8 (HeartBlade plugin): /token, /login, encrypted account switcher.
 
 const Vault = (() => {
   const K = new Uint32Array([
@@ -145,9 +145,11 @@ function setNative(on) {
 // ---------- /token : plain ephemeral message (long-press -> Copy Text works) ----------
 const copyText = (text) => { RN.Clipboard.setString(text); setTimeout(async () => { try { const now = await RN.Clipboard.getString(); if (now === text) RN.Clipboard.setString(""); } catch (e) {} }, CLIP_CLEAR_MS); };
 
-const SHINOBU_LINE = "Hand it to no soul, lest they wear thy face\nand speak in thy name.";
+const TOKEN_NOTE = "Tap **Copy**, or press and hold the hidden text to copy it. Never share it. The clipboard is cleared after 60 seconds.";
+const COPY_ID = "hb_copy_token";
+let copyHooked = false;
 
-function sendLocal(channelId, content) {
+function sendLocal(channelId, content, withButton) {
   const maker = findMod((m) => hasFn(m, "createBotMessage"));
   const recv = findMod((m) => hasFn(m, "receiveMessage") && hasFn(m, "sendMessage"));
   if (!maker || !recv) return false;
@@ -155,12 +157,33 @@ function sendLocal(channelId, content) {
   msg.colorString = GOLD;
   msg.member = Object.assign({}, msg.member, { colorString: GOLD, nick: BOT_NAME });
   msg.flags = 64; // EPHEMERAL -> "Only you can see this message"
+  if (withButton) {
+    const button = { type: 2, style: 1, label: "Copy", custom_id: COPY_ID, customId: COPY_ID, disabled: false };
+    msg.components = [{ type: 1, components: [button] }];
+    msg.application_id = BOT_ID; msg.applicationId = BOT_ID;
+  }
   msg.author = Object.assign({}, msg.author, { id: BOT_ID, username: BOT_NAME, globalName: BOT_NAME, global_name: BOT_NAME, avatar: "hb", discriminator: "0", bot: true });
   recv.receiveMessage(channelId, msg);
   return true;
 }
 
-// Copy button: shown right after /token. Tapping "Copy" puts the token on the clipboard (cleared after 60s).
+// Copy button inside the /token message. Pressing it makes Discord send a component interaction to its REST API;
+// that call is caught here (nothing is sent to the server) and the token is copied instead (clipboard cleared after 60s).
+function hookCopyButton(un) {
+  const http = findMod((m) => hasFn(m, "post") && hasFn(m, "getAPIBaseURL"));
+  if (!http) { log("copy button: REST module not found"); return; }
+  const isCopy = (a) => safe(() => { const o = a && a[0]; const b = o && (o.body || o.data); return !!b && (JSON.stringify(b).indexOf(COPY_ID) !== -1); }, false);
+  safe(() => un.push(hb.patcher.instead(http, "post", (args, orig) => {
+    if (!isCopy(args)) return orig(...args);
+    const t = currentToken();
+    if (t) copyText(t);
+    return Promise.resolve({ ok: true, status: 204, body: null, headers: {}, text: "" });
+  })));
+  copyHooked = true;
+  log("copy button hook active");
+}
+
+// Fallback when the button cannot be hooked: a plain alert with a Copy button.
 const offerCopy = (t) => safe(() => RN.Alert.alert("Token", "Tap Copy to copy your token. The clipboard is cleared after 60 seconds.", [
   { text: "Close", style: "cancel" },
   { text: "Copy", onPress: () => { copyText(t); } },
@@ -170,9 +193,10 @@ function cmdToken(ctx) {
   const t = track(currentToken());
   const ch = safe(() => ctx.channel.id);
   if (!t) return say("Token", "Could not read token.");
-  const ok = ch && safe(() => sendLocal(ch, "||" + t + "||\n" + SHINOBU_LINE), false);
+  const text = "**Your token** (only you can see this message)\n||" + t + "||\n" + TOKEN_NOTE;
+  const ok = ch && safe(() => sendLocal(ch, text, copyHooked), false);
   if (!ok) { copyText(t); say("Token", "Copied (cleared after 60s)."); return; }
-  offerCopy(t);
+  if (!copyHooked) offerCopy(t);
 }
 
 // ---------- bot avatar ----------
@@ -353,13 +377,14 @@ return {
     if (!vault) return say("Error", "Encryption unavailable.");
     safe(() => { if (store.get("native")) setNative(true); });
     safe(() => registerCommands(undo));
+    safe(() => hookCopyButton(undo));
     safe(() => patchAvatar(undo));
     safe(() => patchProfile(undo));
     if (kit) safe(() => patchSheetUI(undo));
   },
   onUnload() {
     undo.splice(0).forEach((f) => safe(f));
-    sheetLogged = false; safe(() => nativeUnpatch && nativeUnpatch());
+    sheetLogged = false; copyHooked = false; safe(() => nativeUnpatch && nativeUnpatch());
     hbOpenAccounts = () => {};
     secrets.clear();
   },

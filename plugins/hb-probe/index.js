@@ -1,4 +1,4 @@
-// HB Probe v0.3: read-only. Reports property NAMES/kinds only. Never calls
+// HB Probe v0.4: read-only. Reports property NAMES/kinds only. Never calls
 // getToken or any login function and never reads values of any property.
 const lines = [];
 const out = (s) => { lines.push(s); try { hb.logger.log("[probe] " + s); } catch (e) {} };
@@ -21,7 +21,30 @@ const SEARCHES = {
   auth: /login|logout|switchAccount|multiAccount|addAccount|removeAccount|setToken|authenticate|validateToken/i,
   commands: /^(registerCommand|addCommand|getBuiltInCommands|BUILT_IN_COMMANDS|getCommands|unregisterCommand)$/i,
   nav: /^(pushScreen|showToast|openModal|pushModal)$/i,
+  interaction: /ComponentInteraction|sendInteraction|InteractionActions|performButton|handleButton/i,
+  rest: /^getAPIBaseURL$/,
+  loginNav: /^(addAccount|startAddAccount|openAddAccount|navigateToLogin|showLogin|goToLogin|initiateLogin|openLogin|pushLogin)$/i,
 };
+
+// Components (their function names), found without running any getter: profile body, note, sheets.
+const COMPONENT_RE = /Note|ProfileBody|ProfileMain|ProfileTab|UserProfile|MemberSince|Connections|ActionSheet|BottomSheet|OnlineStatus|StatusSheet|AddAccount|AccountSwitch|MultiAccount/i;
+function searchComponents() {
+  const pred = (m) => {
+    if (!m || isStub(m)) return false;
+    const d = safe(() => Object.getOwnPropertyDescriptor(m, "default"), null);
+    const f = d && d.value;
+    if (typeof f !== "function" && !(f && typeof f === "object")) return false;
+    const n = safe(() => f.displayName || f.name || (f.type && (f.type.displayName || f.type.name)) || "", "");
+    return !!n && COMPONENT_RE.test(n);
+  };
+  const found = safe(() => hb.metro.findAll(pred), []);
+  const arr = Array.isArray(found) ? found : [];
+  out("components: " + arr.length + " module(s)");
+  arr.slice(0, 40).forEach((m, i) => {
+    const f = safe(() => Object.getOwnPropertyDescriptor(m, "default").value);
+    out("  [component#" + i + "] " + safe(() => f.displayName || f.name || (f.type && (f.type.displayName || f.type.name)), "?"));
+  });
+}
 
 function search(label, re) {
   const pred = (m) => {
@@ -49,6 +72,9 @@ function storeInfo(name) {
 function run() {
   ["AuthenticationStore", "MultiAccountStore", "UserStore"].forEach(storeInfo);
   for (const k of Object.keys(SEARCHES)) search(k, SEARCHES[k]);
+  safe(searchComponents);
+  const http = safe(() => hb.metro.findAll((m) => m && !isStub(m) && safe(() => typeof Object.getOwnPropertyDescriptor(m, "getAPIBaseURL").value === "function", false))[0]);
+  out("REST module: " + (http ? own(http).filter((k) => /^(get|post|put|patch|del|delete)$/.test(k)).map((k) => k + ":" + kind(http, k)).join(", ") : "not found"));
   out("Alert.prompt: " + safe(() => typeof hb.ReactNative.Alert.prompt, "none"));
   out("Clipboard.setString: " + safe(() => typeof hb.ReactNative.Clipboard.setString, "none"));
 }
@@ -57,7 +83,7 @@ return {
   onLoad() {
     try { run(); } catch (e) { out("probe error: " + (e && e.message)); }
     safe(() => hb.storage.set("probeReport", lines.join("\n")));
-    safe(() => hb.ReactNative.Alert.alert("HB Probe 0.3", "Done (" + lines.length + " lines). Developer > Copy debug report."));
+    safe(() => hb.ReactNative.Alert.alert("HB Probe 0.4", "Done (" + lines.length + " lines). Developer > Copy debug report."));
   },
   onUnload() {},
 };
