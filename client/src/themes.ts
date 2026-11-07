@@ -220,6 +220,10 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
     modes.set(mode, (modes.get(mode) ?? 0) + 1);
     // A custom profile (Nitro profile colours) is drawn with its own colour set: Discord answers those, the theme stays out of it.
     if (!KNOWN_MODES.has(mode)) return;
+    // A part of the UI drawn in another mode than the app itself (a light Nitro profile inside a dark app) keeps Discord's own colours,
+    // otherwise light text from the theme lands on a light background.
+    modeTotal++;
+    if (modeTotal > 40 && mode !== appMode()) return;
     const light = mode === "light";
     const name = nameOf(args[1]);
     if (!name) return;
@@ -270,6 +274,9 @@ const PROFILE_TOKEN = /(^|_)PROFILE(_|$)|SYNCED_WITH_USER_THEME/;
 let profileCustom = false;
 const modes = new Map<string, number>();
 let lastModes = "";
+let modeTotal = 0;
+/** The mode the app itself is drawn in: the one Discord asks for most. */
+function appMode(): string { let best = "", n = -1; for (const [k, v] of modes) if (v > n) { best = k; n = v; } return best; }
 
 /** Logs the colour tokens Discord asked for that the theme did not answer (name=original colour), so they can be added to the theme. */
 function dumpUnthemed() {
