@@ -1,7 +1,7 @@
 {
   "id": "message-logger",
   "name": "Message Logger",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "author": "wvm",
   "description": "Keeps deleted messages on screen and shows edit history. Ignore bots, yourself, users, channels or servers by ID."
 }

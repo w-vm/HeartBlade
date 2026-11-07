@@ -338,23 +338,7 @@ function LoggerSettings() {
       cycle("logLimit", "Log size", [[100, "100"], [300, "300"], [1000, "1000"]]),
       cycle("cacheLimit", "Messages remembered", [[500, "500"], [2000, "2000"], [5000, "5000"]], "Only messages seen while the app is open can be recovered."),
     ]),
-    R.createElement(Group, { title: "Debug", footer: "Open a chat that shows a deleted or edited note, open this page, tap the row, then send the log from Developer." }, [
-      R.createElement(Row, { key: "dbg", title: "Find where notes are drawn", chevron: true, onPress: () => act(debugNotes) }),
-    ]),
     R.createElement(Group, { title: "Log", footer: list.length ? "Tap to copy (edits copy the text before and after). Long press to ignore the user, channel or server, or remove the entry." : undefined, headerRight: list.length ? R.createElement(kit.HeaderButton, { label: "Clear", danger: true, onPress: () => ask("Clear log", "Remove every logged message?", "Clear", true).then((y) => { if (y) { hb.storage.set("log", []); bump(); } }) }) : null }, entries));
-}
-
-function debugNotes() {
-  const find = safe(() => hb.dev.tree.find, null);
-  if (!find) return hb.ui.alert("Debug", "Developer tools are not available in this client.");
-  for (const q of ["Deleted at", "Edited at", cfg("label")]) {
-    const out = safe(() => find(q), null);
-    const text = out && (out.text || String(out)) || "(no result)";
-    log("debug find \"" + q + "\":");
-    String(text).split("\n").forEach((l) => { if (l.trim()) log("  " + l); });
-  }
-  log("debug: Text renders seen " + (seen.count || 0) + ", notes matched " + (seen.matched || 0));
-  hb.ui.alert("Debug", "Written to the log (Developer, Logs).");
 }
 
 const undo = [];

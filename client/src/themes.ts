@@ -223,7 +223,7 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
     const light = mode === "light";
     const name = nameOf(args[1]);
     if (!name) return;
-    if (PROFILE_TOKEN.test(name)) return;
+    if (profileCustom && PROFILE_TOKEN.test(name)) return;
     const s = t.semanticColors ?? {};
     const v = pick(s[name] ?? (ALT[name] ? s[ALT[name]] : undefined), light);
     if (v) { hits++; return v; }
@@ -238,6 +238,16 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
     if (t.neutralBrand) { const nb = brandNeutralFor(name, ret); if (nb) { hits++; autoHits++; return nb; } }
     if (typeof ret === "string" && unthemed.size < 600) unthemed.set(name, ret);
   };
+  // Which profile is being drawn: asking the profile store for a user's profile tells whether it has custom colours.
+  try {
+    const ups: any = metro.findByStoreName("UserProfileStore");
+    if (ups && typeof ups.getUserProfile === "function") {
+      for (const fn of ["getUserProfile", "getGuildMemberProfile"]) {
+        if (typeof ups[fn] !== "function") continue;
+        undo.push(patcher.after(ups, fn, (_a: any[], ret: any) => { if (ret && typeof ret === "object") profileCustom = !!(ret.themeColors ?? ret.theme_colors ?? ret.profileThemeColors); }));
+      }
+    }
+  } catch (e) { warn("theme: profile store not patched", (e as any)?.message ?? e); }
   for (const meta of metas) {
     if (patchedMeta.has(meta)) continue;
     patchedMeta.add(meta);
@@ -253,6 +263,8 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
 
 const KNOWN_MODES = new Set(["dark", "light", "darker", "midnight", "amoled", "black"]);
 const PROFILE_TOKEN = /(^|_)PROFILE(_|$)|SYNCED_WITH_USER_THEME/;
+/** True while the profile being drawn has its own (Nitro) colours: then the profile tokens stay Discord's. Plain profiles, yours included, follow the theme. */
+let profileCustom = false;
 const modes = new Map<string, number>();
 let lastModes = "";
 
