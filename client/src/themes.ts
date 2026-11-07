@@ -217,9 +217,13 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
     const t = current;
     if (!t) return;
     const mode = String(args[0] ?? "dark").toLowerCase();
+    modes.set(mode, (modes.get(mode) ?? 0) + 1);
+    // A custom profile (Nitro profile colours) is drawn with its own colour set: Discord answers those, the theme stays out of it.
+    if (!KNOWN_MODES.has(mode)) return;
     const light = mode === "light";
     const name = nameOf(args[1]);
     if (!name) return;
+    if (PROFILE_TOKEN.test(name)) return;
     const s = t.semanticColors ?? {};
     const v = pick(s[name] ?? (ALT[name] ? s[ALT[name]] : undefined), light);
     if (v) { hits++; return v; }
@@ -247,8 +251,15 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
   }
 }
 
+const KNOWN_MODES = new Set(["dark", "light", "darker", "midnight", "amoled", "black"]);
+const PROFILE_TOKEN = /(^|_)PROFILE(_|$)|SYNCED_WITH_USER_THEME/;
+const modes = new Map<string, number>();
+let lastModes = "";
+
 /** Logs the colour tokens Discord asked for that the theme did not answer (name=original colour), so they can be added to the theme. */
 function dumpUnthemed() {
+  const seenModes = [...modes.keys()].join(",");
+  if (seenModes && seenModes !== lastModes) { lastModes = seenModes; log(`theme: colour modes seen: ${[...modes.entries()].map(([k, v]) => `${k}=${v}`).join(" ")}`); }
   const fresh = [...unthemed.entries()].filter(([k]) => !dumped.has(k));
   if (!fresh.length) return;
   fresh.forEach(([k]) => dumped.add(k));
