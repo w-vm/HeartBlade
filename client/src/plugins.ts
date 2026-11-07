@@ -9,7 +9,7 @@ export interface RegistryEntry {
   enabled: boolean;
 }
 interface Manifest { id?: string; name?: string; version?: string; author?: string; description?: string; }
-interface Running { id: string; stop(): void; settings?: any; }
+interface Running { id: string; stop(): void; settings?: any; pages?: Record<string, any>; }
 
 const running = new Map<string, Running>();
 
@@ -34,6 +34,8 @@ export function startPlugin(id: string) {
     running.set(id, {
       id,
       // A plugin may return `settings`: a React component that HeartBlade shows on the plugin's own page.
+      // `pages`: { name: component } sub pages the settings can open (props.open(name, title)).
+      pages: exported.pages && typeof exported.pages === "object" ? exported.pages : undefined,
       settings: typeof exported.settings === "function" || (exported.settings && typeof exported.settings === "object") ? exported.settings : undefined,
       stop() {
         try { exported.onUnload?.(); } catch (e) { error(`plugin ${id}: onUnload`, e); }
@@ -59,4 +61,6 @@ export function startEnabledPlugins() {
 export const runningPlugins = () => [...running.keys()];
 /** The settings component a running plugin exposes (undefined when it has none or is not running). */
 export const pluginSettings = (id: string): any => running.get(id)?.settings;
+/** A sub page (React component) a running plugin exposes under `pages`. */
+export const pluginPage = (id: string, name: string): any => running.get(id)?.pages?.[name];
 export const hasPluginSettings = (id: string) => !!pluginSettings(id);

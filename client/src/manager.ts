@@ -10,9 +10,16 @@ import { BRAND } from "./brand";
 export type Kind = "plugin" | "theme";
 export interface Meta { name: string; version?: string; author?: string; description?: string; }
 
-let changed = false;
-/** True once something was installed / toggled / removed in this session (the UI then offers a restart). */
-export const needsRestart = () => changed;
+let changed = false;                              // installs, removals, updates: always need a refresh
+const bootState = new Map<string, boolean>();    // enabled state of every entry as it was when this session started (recorded at the first toggle)
+/** True when something was installed / removed / updated, or a plugin or theme now differs from what is running. Switching one off and on again needs nothing. */
+export const needsRestart = () => {
+  if (changed) return true;
+  if (!bootState.size) return false;
+  const now = new Map(readRegistry().map((e) => [e.type + ":" + e.id, !!e.enabled] as [string, boolean]));
+  for (const [k, v] of bootState) if (now.get(k) !== v) return true;
+  return false;
+};
 export const markChanged = () => { changed = true; };
 
 export const listEntries = (kind: Kind): RegistryEntry[] => readRegistry().filter((e) => e.type === kind);
@@ -37,13 +44,13 @@ function upsert(type: Kind, id: string, url: string) {
 
 export function setEnabled(type: Kind, id: string, enabled: boolean) {
   const reg = readRegistry();
+  for (const e of reg) { const k = e.type + ":" + e.id; if (!bootState.has(k)) bootState.set(k, !!e.enabled); }
   for (const e of reg) {
     if (e.type !== type) continue;
     if (e.id === id) e.enabled = enabled;
     else if (type === "theme" && enabled) e.enabled = false; // one active theme
   }
   saveRegistry(reg);
-  markChanged();
 }
 
 export function remove(type: Kind, id: string) {

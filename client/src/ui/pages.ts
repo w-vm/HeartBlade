@@ -2,7 +2,7 @@ import * as native from "../native";
 import { BRAND } from "../brand";
 import { log, error } from "../log";
 import { moduleCount } from "../metro";
-import { runningPlugins, pluginSettings } from "../plugins";
+import { runningPlugins, pluginSettings, pluginPage } from "../plugins";
 import { readPrefs, setPref } from "../prefs";
 import { diag } from "../diag";
 import { updateState, onUpdateState, checkUpdates, clearUpdates, markClientCurrent, updatesPending, updateSummary } from "../updates";
@@ -262,6 +262,15 @@ function ManagerPage(props: any) {
 
 // ---- plugin / theme info ------------------------------------------------------------------------------------
 
+/** A sub page a plugin opened from its settings (props.open(name, title)). */
+function PluginPage(props: any) {
+  useRefresh(props);
+  useChrome(props);
+  const C = pluginPage(props?.route?.params?.id ?? "", props?.route?.params?.name ?? "");
+  if (!C) return Screen({ children: [Prose({ paragraphs: ["This page is not available. The plugin may be turned off."] })] });
+  return Screen({ children: [h(C, { navigation: props.navigation })] });
+}
+
 /** Info page of one plugin or theme: details, its own settings (plugins that have them), and who made it. */
 function InfoPage(props: any) {
   const { View } = RN();
@@ -287,7 +296,7 @@ function InfoPage(props: any) {
     ],
   }));
 
-  if (Settings) kids.push(h(View, { style: { marginBottom: 22 } }, h(Settings, { key: id })));
+  if (Settings) kids.push(h(View, { style: { marginBottom: 22 } }, h(Settings, { key: id, open: (name: string, title: string) => go(props, "plugin", title || name, { id, name }) })));
 
   // Made by: same credit as the HeartBlade page, with the Discord account only (no Instagram).
   if (author) {
@@ -404,6 +413,7 @@ const PAGES: Record<string, (p: any) => any> = {
   plugins: (p) => h(ManagerPage, { ...p, kind: "plugin" }),
   themes: (p) => h(ManagerPage, { ...p, kind: "theme" }),
   info: (p) => h(InfoPage, p),
+  plugin: (p) => h(PluginPage, p),
   developer: (p) => h(DeveloperPage, p),
   logs: (p) => h(LogsPage, p),
   console: (p) => h(ConsolePage, p),
