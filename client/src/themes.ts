@@ -239,15 +239,18 @@ export function applyTheme(theme: Theme, exportsHint?: any) {
     if (typeof ret === "string" && unthemed.size < 600) unthemed.set(name, ret);
   };
   // Which profile is being drawn: asking the profile store for a user's profile tells whether it has custom colours.
-  try {
-    const ups: any = metro.findByStoreName("UserProfileStore");
-    if (ups && typeof ups.getUserProfile === "function") {
+  // Looked up late (after Discord has started) so searching the modules cannot disturb the launch.
+  setTimeout(() => {
+    try {
+      if (current !== theme) return;
+      const ups: any = metro.findLoaded(metro.byStoreName("UserProfileStore"));   // never force-initialises modules
+      if (!ups) return;
       for (const fn of ["getUserProfile", "getGuildMemberProfile"]) {
         if (typeof ups[fn] !== "function") continue;
         undo.push(patcher.after(ups, fn, (_a: any[], ret: any) => { if (ret && typeof ret === "object") profileCustom = !!(ret.themeColors ?? ret.theme_colors ?? ret.profileThemeColors); }));
       }
-    }
-  } catch (e) { warn("theme: profile store not patched", (e as any)?.message ?? e); }
+    } catch (e) { warn("theme: profile store not patched", (e as any)?.message ?? e); }
+  }, 6000);
   for (const meta of metas) {
     if (patchedMeta.has(meta)) continue;
     patchedMeta.add(meta);
